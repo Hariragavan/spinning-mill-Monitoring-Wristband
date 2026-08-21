@@ -133,12 +133,12 @@ function App() {
     if (selectedWorker) return <WorkerDetail workerId={selectedWorker} workerData={workers[selectedWorker]} onBack={() => setSelectedWorker(null)} />;
     switch (activePage) {
       case 'machines':    return <MachinesPage workers={workers} />;
-      case 'operators':   return <OperatorsPage workers={workers} />;
+      case 'operators':   return <OperatorsPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} />;
       case 'performance': return <PerformancePage workers={workers} />;
       case 'rounds':      return <RoundsPage workers={workers} />;
       case 'breaks':      return <BreaksPage workers={workers} />;
       case 'reports':     return <ReportsPage />;
-      case 'alerts':      return <AlertsPage workers={workers} />;
+      case 'alerts':      return <AlertsPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} />;
       case 'settings':    return <SettingsPage />;
       default:            return <DashboardPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} />;
     }

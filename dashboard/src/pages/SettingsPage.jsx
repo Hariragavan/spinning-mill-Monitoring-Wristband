@@ -1,165 +1,40 @@
 import React, { useState } from 'react';
+import { Check, RotateCcw, Save, Radio, ShieldAlert, SlidersHorizontal } from 'lucide-react';
+
+const DEFAULTS = { idleThreshold: 3, alertSound: true, autoRefresh: true, refreshInterval: 3, darkMode: false, batteryThreshold: 20 };
 
 const SettingsPage = () => {
-  const [idleThreshold, setIdleThreshold] = useState(3);
-  const [alertSound, setAlertSound] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const [refreshInterval, setRefreshInterval] = useState(3);
-  const [darkMode, setDarkMode] = useState(false);
+  const [settings, setSettings] = useState(DEFAULTS);
+  const [saved, setSaved] = useState(false);
+  const update = (key, value) => { setSettings(current => ({ ...current, [key]: value })); setSaved(false); };
+  const reset = () => { setSettings(DEFAULTS); setSaved(false); };
+  const save = () => { setSaved(true); setTimeout(() => setSaved(false), 2500); };
+  const isFirebaseConfigured = import.meta.env.VITE_FIREBASE_API_KEY && import.meta.env.VITE_FIREBASE_API_KEY !== 'YOUR_API_KEY';
 
-  return (
-    <div className="page-content">
-      <div className="page-header">
-        <h2>Settings</h2>
-        <p className="page-subtitle">System configuration and alert thresholds</p>
-      </div>
-
-      <div className="settings-grid">
-        {/* Alert Configuration */}
-        <div className="card">
-          <div className="card-title">Alert Configuration</div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Idle Alert Threshold</div>
-              <div className="setting-desc">Trigger alert when a worker is stationary beyond this duration</div>
-            </div>
-            <div className="setting-control">
-              <select value={idleThreshold} onChange={e => setIdleThreshold(Number(e.target.value))} className="setting-select">
-                <option value={1}>1 minute</option>
-                <option value={2}>2 minutes</option>
-                <option value={3}>3 minutes</option>
-                <option value={5}>5 minutes</option>
-                <option value={10}>10 minutes</option>
-              </select>
-            </div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Alert Sound</div>
-              <div className="setting-desc">Play an audible alert when critical incidents are detected</div>
-            </div>
-            <div className="setting-control">
-              <label className="toggle">
-                <input type="checkbox" checked={alertSound} onChange={e => setAlertSound(e.target.checked)} />
-                <span className="toggle-slider" />
-              </label>
-            </div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Low Battery Threshold</div>
-              <div className="setting-desc">Warn when wristband battery drops below this level</div>
-            </div>
-            <div className="setting-control">
-              <select defaultValue={20} className="setting-select">
-                <option value={10}>10%</option>
-                <option value={15}>15%</option>
-                <option value={20}>20%</option>
-                <option value={25}>25%</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* System Configuration */}
-        <div className="card">
-          <div className="card-title">System Configuration</div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Auto Refresh</div>
-              <div className="setting-desc">Automatically update dashboard data from the simulator or Firebase</div>
-            </div>
-            <div className="setting-control">
-              <label className="toggle">
-                <input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} />
-                <span className="toggle-slider" />
-              </label>
-            </div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Refresh Interval</div>
-              <div className="setting-desc">How often to update simulated data (in seconds)</div>
-            </div>
-            <div className="setting-control">
-              <select value={refreshInterval} onChange={e => setRefreshInterval(Number(e.target.value))} className="setting-select">
-                <option value={1}>1 second</option>
-                <option value={3}>3 seconds</option>
-                <option value={5}>5 seconds</option>
-                <option value={10}>10 seconds</option>
-              </select>
-            </div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Dark Mode</div>
-              <div className="setting-desc">Switch between light and dark interface themes</div>
-            </div>
-            <div className="setting-control">
-              <label className="toggle">
-                <input type="checkbox" checked={darkMode} onChange={e => setDarkMode(e.target.checked)} />
-                <span className="toggle-slider" />
-              </label>
-            </div>
-          </div>
-        </div>
-
-        {/* Beacon Configuration */}
-        <div className="card">
-          <div className="card-title">Beacon Configuration</div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Beacons per Machine</div>
-              <div className="setting-desc">Number of BLE checkpoints installed on each machine</div>
-            </div>
-            <div className="setting-control"><span className="setting-static">8</span></div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Beacon Layout</div>
-              <div className="setting-desc">A1\u2013A4 (Side A) + B1\u2013B4 (Side B) per machine</div>
-            </div>
-            <div className="setting-control"><span className="setting-static">A+B Dual Row</span></div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Total Beacons</div>
-              <div className="setting-desc">Across all 3 active machines</div>
-            </div>
-            <div className="setting-control"><span className="setting-static">24</span></div>
-          </div>
-        </div>
-
-        {/* Firebase Connection */}
-        <div className="card">
-          <div className="card-title">Firebase Connection</div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Connection Status</div>
-              <div className="setting-desc">Current connection to Firebase Realtime Database</div>
-            </div>
-            <div className="setting-control">
-              <span className="status-badge status-idle">Simulator Mode</span>
-            </div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Database URL</div>
-              <div className="setting-desc">Set via VITE_FIREBASE_DATABASE_URL environment variable</div>
-            </div>
-            <div className="setting-control"><span className="text-muted">Not configured</span></div>
-          </div>
-          <div className="setting-row">
-            <div>
-              <div className="setting-label">Project ID</div>
-              <div className="setting-desc">Set via VITE_FIREBASE_PROJECT_ID environment variable</div>
-            </div>
-            <div className="setting-control"><span className="text-muted">Not configured</span></div>
-          </div>
-        </div>
-      </div>
+  return <div className="page-content">
+    <div className="page-header"><h2>Settings</h2><p className="page-subtitle">Configure monitoring behavior, alert thresholds, and system connections</p></div>
+    <div className="summary-row">
+      <div className="summary-card"><div className="summary-value green">{settings.autoRefresh ? 'ON' : 'OFF'}</div><div className="summary-label">Auto Refresh</div></div>
+      <div className="summary-card"><div className="summary-value">{settings.refreshInterval}s</div><div className="summary-label">Refresh Interval</div></div>
+      <div className="summary-card"><div className="summary-value amber">{settings.idleThreshold}m</div><div className="summary-label">Idle Threshold</div></div>
+      <div className="summary-card"><div className={`summary-value ${isFirebaseConfigured ? 'green' : 'amber'}`}>{isFirebaseConfigured ? 'LIVE' : 'MOCK'}</div><div className="summary-label">Data Connection</div></div>
     </div>
-  );
+    <div className="settings-actions"><span className={saved ? 'settings-saved' : 'text-muted'}>{saved && <Check size={15} />} {saved ? 'Settings saved for this session' : 'Changes apply to this dashboard session'}</span><div><button className="settings-button secondary" onClick={reset}><RotateCcw size={15} /> Reset</button><button className="settings-button" onClick={save}><Save size={15} /> Save Changes</button></div></div>
+    <div className="settings-grid">
+      <div className="card"><div className="card-title"><ShieldAlert size={17} /> Alert Configuration</div>
+        <div className="setting-row"><div><div className="setting-label">Idle Alert Threshold</div><div className="setting-desc">Alert when an operator is stationary beyond this duration</div></div><div className="setting-control"><select value={settings.idleThreshold} onChange={event => update('idleThreshold', Number(event.target.value))} className="setting-select"><option value={1}>1 minute</option><option value={2}>2 minutes</option><option value={3}>3 minutes</option><option value={5}>5 minutes</option><option value={10}>10 minutes</option></select></div></div>
+        <div className="setting-row"><div><div className="setting-label">Low Battery Threshold</div><div className="setting-desc">Warn when a wristband battery drops below this level</div></div><div className="setting-control"><select value={settings.batteryThreshold} onChange={event => update('batteryThreshold', Number(event.target.value))} className="setting-select"><option value={10}>10%</option><option value={15}>15%</option><option value={20}>20%</option><option value={25}>25%</option></select></div></div>
+        <div className="setting-row"><div><div className="setting-label">Alert Sound</div><div className="setting-desc">Play an audible alert for critical incidents</div></div><div className="setting-control"><label className="toggle"><input type="checkbox" checked={settings.alertSound} onChange={event => update('alertSound', event.target.checked)} /><span className="toggle-slider" /></label></div></div>
+      </div>
+      <div className="card"><div className="card-title"><SlidersHorizontal size={17} /> System Configuration</div>
+        <div className="setting-row"><div><div className="setting-label">Auto Refresh</div><div className="setting-desc">Update dashboard data automatically</div></div><div className="setting-control"><label className="toggle"><input type="checkbox" checked={settings.autoRefresh} onChange={event => update('autoRefresh', event.target.checked)} /><span className="toggle-slider" /></label></div></div>
+        <div className="setting-row"><div><div className="setting-label">Refresh Interval</div><div className="setting-desc">How frequently simulated or Firebase data is refreshed</div></div><div className="setting-control"><select value={settings.refreshInterval} onChange={event => update('refreshInterval', Number(event.target.value))} className="setting-select"><option value={1}>1 second</option><option value={3}>3 seconds</option><option value={5}>5 seconds</option><option value={10}>10 seconds</option></select></div></div>
+        <div className="setting-row"><div><div className="setting-label">Dark Mode</div><div className="setting-desc">Reserved for the next visual theme update</div></div><div className="setting-control"><label className="toggle"><input type="checkbox" checked={settings.darkMode} onChange={event => update('darkMode', event.target.checked)} /><span className="toggle-slider" /></label></div></div>
+      </div>
+      <div className="card"><div className="card-title"><Radio size={17} /> Beacon Configuration</div><div className="setting-row"><div><div className="setting-label">Active Layout</div><div className="setting-desc">A1-A4 on Side A and B1-B4 on Side B</div></div><div className="setting-control"><span className="setting-static">8 / machine</span></div></div><div className="setting-row"><div><div className="setting-label">Monitored Machines</div><div className="setting-desc">Currently configured production machines</div></div><div className="setting-control"><span className="setting-static">3 active</span></div></div><div className="setting-row"><div><div className="setting-label">Total Beacons</div><div className="setting-desc">Across active machines</div></div><div className="setting-control"><span className="setting-static">24</span></div></div></div>
+      <div className="card"><div className="card-title"><Radio size={17} /> Firebase Connection</div><div className="setting-row"><div><div className="setting-label">Connection Status</div><div className="setting-desc">Realtime Database data source</div></div><div className="setting-control"><span className={`status-badge ${isFirebaseConfigured ? 'status-good' : 'status-idle'}`}>{isFirebaseConfigured ? 'Connected' : 'Simulator Mode'}</span></div></div><div className="setting-row"><div><div className="setting-label">Database URL</div><div className="setting-desc">VITE_FIREBASE_DATABASE_URL environment variable</div></div><div className="setting-control"><span className="text-muted">{isFirebaseConfigured ? 'Configured' : 'Not configured'}</span></div></div><div className="setting-row"><div><div className="setting-label">Project ID</div><div className="setting-desc">VITE_FIREBASE_PROJECT_ID environment variable</div></div><div className="setting-control"><span className="text-muted">{isFirebaseConfigured ? 'Configured' : 'Not configured'}</span></div></div></div>
+    </div>
+  </div>;
 };
 
 export default SettingsPage;
