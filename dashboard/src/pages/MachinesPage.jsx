@@ -1,9 +1,9 @@
 import React from 'react';
 
 const MACHINE_DATA = [
-  { id: 'M1', name: 'Ring Frame #1', type: 'Ring Spinning', length: '52m', spindles: 480, beacons: 8, zone: 'Zone A' },
-  { id: 'M2', name: 'Ring Frame #2', type: 'Ring Spinning', length: '52m', spindles: 480, beacons: 8, zone: 'Zone B' },
-  { id: 'M3', name: 'Ring Frame #3', type: 'Ring Spinning', length: '52m', spindles: 480, beacons: 8, zone: 'Zone C' },
+  { id: 'M1', name: 'Machine 1', type: 'Ring Spinning', length: '52m', spindles: 480, beacons: 8, zone: 'Zone A' },
+  { id: 'M2', name: 'Machine 2', type: 'Ring Spinning', length: '52m', spindles: 480, beacons: 8, zone: 'Zone B' },
+  { id: 'M3', name: 'Machine 3', type: 'Ring Spinning', length: '52m', spindles: 480, beacons: 8, zone: 'Zone C' },
   { id: 'M4', name: 'Winding Unit #1', type: 'Auto Winding', length: '38m', spindles: 120, beacons: 6, zone: 'Zone D' },
   { id: 'M5', name: 'Draw Frame #1', type: 'Draw Frame',    length: '24m', spindles: 0,   beacons: 4, zone: 'Zone D' },
 ];

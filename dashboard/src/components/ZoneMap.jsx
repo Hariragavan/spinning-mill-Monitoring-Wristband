@@ -14,9 +14,9 @@ const WORKER_COLORS = {
 
 // Each zone has one machine
 const ZONES = [
-  { id: 'zone-a', label: 'Zone A', machine: 'M1', machineName: 'Ring Frame #1' },
-  { id: 'zone-b', label: 'Zone B', machine: 'M2', machineName: 'Ring Frame #2' },
-  { id: 'zone-c', label: 'Zone C', machine: 'M3', machineName: 'Ring Frame #3' },
+  { id: 'zone-a', label: 'Zone A', machine: 'M1', machineName: 'Machine 1' },
+  { id: 'zone-b', label: 'Zone B', machine: 'M2', machineName: 'Machine 2' },
+  { id: 'zone-c', label: 'Zone C', machine: 'M3', machineName: 'Machine 3' },
   { id: 'zone-d', label: 'Zone D', machine: null, machineName: 'Maintenance Bay' },
 ];
 
@@ -24,6 +24,25 @@ const A_BEACONS = ['A1', 'A2', 'A3', 'A4'];
 const B_BEACONS = ['B1', 'B2', 'B3', 'B4'];
 
 const ZoneMap = ({ workers, onWorkerClick }) => {
+  const [visitedBeacons, setVisitedBeacons] = React.useState({});
+
+  React.useEffect(() => {
+    setVisitedBeacons(prev => {
+      const next = { ...prev };
+      let updated = false;
+      Object.values(workers).forEach(w => {
+        if (w.live?.last_beacon_id && w.live?.current_machine) {
+          const beaconKey = `${w.live.current_machine}-${w.live.last_beacon_id.split('-')[1]}`;
+          if (!next[beaconKey] || (Date.now() - next[beaconKey]) > 3000) {
+            next[beaconKey] = Date.now();
+            updated = true;
+          }
+        }
+      });
+      return updated ? next : prev;
+    });
+  }, [workers]);
+
   // Build a lookup: machine -> list of workers currently on that machine
   const workersByMachine = {};
   Object.entries(workers).forEach(([id, data]) => {
@@ -63,6 +82,61 @@ const ZoneMap = ({ workers, onWorkerClick }) => {
     return beaconId.split('-')[1].startsWith('A');
   };
 
+  const getBeaconDotClass = (zoneMachine, beaconCode, machineWorkers) => {
+    const fullBeaconId = `${zoneMachine}-${beaconCode}`;
+    const workerOnBeacon = machineWorkers.find(w => w.last_beacon_id === fullBeaconId);
+    
+    if (workerOnBeacon) {
+      const status = getWorkerStatusClass(workerOnBeacon);
+      if (status === 'alert' || status === 'idle') {
+        return 'visited-active alert blink-red';
+      }
+      return 'visited-active';
+    }
+
+    const lastTime = visitedBeacons[fullBeaconId];
+    if (lastTime && (Date.now() - lastTime) < 5000) {
+      return 'visited-fade';
+    }
+
+    return '';
+  };
+
+  const getZoneStatusReason = (machineWorkers) => {
+    if (!machineWorkers || machineWorkers.length === 0) {
+      return { text: 'No Active Worker', type: 'empty' };
+    }
+
+    // 1. Check for active incidents (yarn break, elec break, spindle jam, machine break)
+    const incidentWorker = machineWorkers.find(w => w.incident_type && w.incident_type !== 'none');
+    if (incidentWorker) {
+      const type = incidentWorker.incident_type;
+      if (type === 'elec_break') return { text: '⚡ Elec Break (Machine Stopped)', type: 'alert' };
+      if (type === 'yarn_break') return { text: '🧶 Yarn Break Detected', type: 'alert' };
+      if (type === 'spindle_jam') return { text: '🔧 Spindle Jam Issue', type: 'alert' };
+      if (type === 'machine_break') return { text: '⚠️ Machine Breakdown', type: 'alert' };
+      return { text: `⚠️ ${type.replace('_', ' ')}`, type: 'alert' };
+    }
+
+    // 2. Check for break time (restroom, tea break, lunch)
+    const breakWorker = machineWorkers.find(w => w.break_mode && w.break_mode !== 'none');
+    if (breakWorker) {
+      const b = breakWorker.break_mode;
+      if (b === 'restroom') return { text: '🚻 Break Time (Restroom)', type: 'break' };
+      if (b === 'tea_break') return { text: '☕ Tea Break', type: 'break' };
+      if (b === 'lunch') return { text: '🍱 Lunch Break', type: 'break' };
+      return { text: `☕ Break (${b})`, type: 'break' };
+    }
+
+    // 3. Check for idle / stopped worker
+    const idleWorker = machineWorkers.find(w => w.motion_state === 'stationary' && w.idle_duration_sec > 10);
+    if (idleWorker) {
+      return { text: `⏸ Worker Idle (${idleWorker.idle_duration_sec}s)`, type: 'idle' };
+    }
+
+    return { text: '✓ Running Normally', type: 'normal' };
+  };
+
   return (
     <div className="card zone-map-card">
       <div className="card-title">
@@ -72,32 +146,52 @@ const ZoneMap = ({ workers, onWorkerClick }) => {
       <div className="zone-grid">
         {ZONES.map((zone) => {
           const machineWorkers = zone.machine ? (workersByMachine[zone.machine] || []) : [];
+          const hasZoneAlert = machineWorkers.some(w => getWorkerStatusClass(w) !== 'active');
+          const reason = getZoneStatusReason(machineWorkers);
           return (
-            <div key={zone.id} className="zone-cell">
-              <div className="zone-label">{zone.label}</div>
-              <div className="zone-machine-name">{zone.machineName}</div>
+            <div key={zone.id} className={`zone-cell ${hasZoneAlert ? 'zone-cell-alert-yellow' : ''}`}>
+              <div className="zone-cell-header">
+                <div className="zone-title-group">
+                  <span className="zone-machine-title">{zone.machineName}</span>
+                  <span className={`zone-tag ${hasZoneAlert ? 'zone-tag-alert-yellow' : ''}`}>{zone.label}</span>
+                </div>
+                {zone.machine && (
+                  <div className={`zone-status-pill ${reason.type}`}>
+                    {reason.text}
+                  </div>
+                )}
+              </div>
 
               {zone.machine ? (
-                <div className="machine-track">
-                  {/* Side A beacon row */}
-                  <div className="beacon-row">
+                <div className="machine-visual-container">
+                  {/* Side A Beacon Row (Top) */}
+                  <div className="beacon-side side-a">
                     {A_BEACONS.map((b) => (
                       <React.Fragment key={b}>
                         <div
-                          className={`beacon-dot ${machineWorkers.some(w => w.last_beacon_id === `${zone.machine}-${b}`) ? 'active' : ''}`}
+                          className={`beacon-dot ${getBeaconDotClass(zone.machine, b, machineWorkers)}`}
                           style={{ left: `${getBeaconPositionPct(b)}%` }}
                         />
-                        <span className="beacon-label" style={{ left: `${getBeaconPositionPct(b)}%` }}>
+                        <span className="beacon-label beacon-label-top" style={{ left: `${getBeaconPositionPct(b)}%` }}>
                           {b}
                         </span>
                       </React.Fragment>
+                    ))}
+
+                    {/* Active Moving Point under worker pill on Side A */}
+                    {machineWorkers.filter(w => isOnSideA(w)).map((w) => (
+                      <div
+                        key={`dot-${w.id}`}
+                        className={`worker-track-dot ${getWorkerStatusClass(w) !== 'active' ? 'alert-dot' : 'active-dot'} ${w.motion_state === 'walking' ? 'moving' : ''}`}
+                        style={{ left: `${getWorkerBeaconPct(w)}%` }}
+                      />
                     ))}
 
                     {/* Worker pills on Side A */}
                     {machineWorkers.filter(w => isOnSideA(w)).map((w) => (
                       <div
                         key={w.id}
-                        className="worker-pill"
+                        className={`worker-pill worker-pill-top ${getWorkerStatusClass(w) !== 'active' ? 'pill-alert-blink' : ''}`}
                         style={{ left: `${getWorkerBeaconPct(w)}%`, cursor: 'pointer' }}
                         onClick={() => onWorkerClick && onWorkerClick(w.id)}
                       >
@@ -114,25 +208,37 @@ const ZoneMap = ({ workers, onWorkerClick }) => {
                     ))}
                   </div>
 
-                  {/* Side B beacon row */}
-                  <div className="beacon-row">
+                  {/* Machine Line/Bar */}
+                  <div className="machine-body-bar" />
+
+                  {/* Side B Beacon Row (Bottom) */}
+                  <div className="beacon-side side-b">
                     {B_BEACONS.map((b) => (
                       <React.Fragment key={b}>
                         <div
-                          className={`beacon-dot ${machineWorkers.some(w => w.last_beacon_id === `${zone.machine}-${b}`) ? 'active' : ''}`}
+                          className={`beacon-dot ${getBeaconDotClass(zone.machine, b, machineWorkers)}`}
                           style={{ left: `${getBeaconPositionPct(b)}%` }}
                         />
-                        <span className="beacon-label" style={{ left: `${getBeaconPositionPct(b)}%` }}>
+                        <span className="beacon-label beacon-label-bottom" style={{ left: `${getBeaconPositionPct(b)}%` }}>
                           {b}
                         </span>
                       </React.Fragment>
+                    ))}
+
+                    {/* Active Moving Point under worker pill on Side B */}
+                    {machineWorkers.filter(w => !isOnSideA(w)).map((w) => (
+                      <div
+                        key={`dot-${w.id}`}
+                        className={`worker-track-dot ${getWorkerStatusClass(w) !== 'active' ? 'alert-dot' : 'active-dot'} ${w.motion_state === 'walking' ? 'moving' : ''}`}
+                        style={{ left: `${getWorkerBeaconPct(w)}%` }}
+                      />
                     ))}
 
                     {/* Worker pills on Side B */}
                     {machineWorkers.filter(w => !isOnSideA(w)).map((w) => (
                       <div
                         key={w.id}
-                        className="worker-pill"
+                        className={`worker-pill worker-pill-bottom ${getWorkerStatusClass(w) !== 'active' ? 'pill-alert-blink' : ''}`}
                         style={{ left: `${getWorkerBeaconPct(w)}%`, cursor: 'pointer' }}
                         onClick={() => onWorkerClick && onWorkerClick(w.id)}
                       >

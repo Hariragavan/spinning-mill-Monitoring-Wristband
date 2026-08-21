@@ -3,6 +3,7 @@ import ZoneMap from '../components/ZoneMap';
 import KPIGrid from '../components/KPIGrid';
 import EfficiencyChart from '../components/EfficiencyChart';
 import KeyInsights from '../components/KeyInsights';
+import ModeDurationAnalytics from '../components/ModeDurationAnalytics';
 
 const DashboardPage = ({ workers, onWorkerClick }) => {
   return (
@@ -13,6 +14,7 @@ const DashboardPage = ({ workers, onWorkerClick }) => {
         <EfficiencyChart />
         <KeyInsights />
       </div>
+      <ModeDurationAnalytics />
     </>
   );
 };

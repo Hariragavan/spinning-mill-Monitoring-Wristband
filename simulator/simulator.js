@@ -21,7 +21,7 @@ const db = getDatabase(app);
 
 const WORKERS = ['worker_1', 'worker_2', 'worker_3'];
 const MACHINES = ['M1', 'M2', 'M3'];
-const BEACONS_PER_MACHINE = ['A1', 'A2', 'A3', 'A4', 'B1', 'B2', 'B3', 'B4'];
+const BEACONS_PER_MACHINE = ['A1', 'A2', 'A3', 'A4', 'B4', 'B3', 'B2', 'B1'];
 
 // Helper to generate random number in range
 const randomInRange = (min, max) => Math.random() * (max - min) + min;
@@ -66,11 +66,11 @@ function simulateTick() {
       state.idle_duration_sec = 0;
     }
 
-    // Simulate incidents (1% chance)
-    if (Math.random() < 0.01 && state.incident_type === 'none') {
-      const incidents = ['yarn_break', 'spindle_jam'];
+    // Simulate incidents (2% chance)
+    if (Math.random() < 0.02 && state.incident_type === 'none') {
+      const incidents = ['yarn_break', 'spindle_jam', 'elec_break', 'machine_break'];
       state.incident_type = incidents[randomInt(0, incidents.length)];
-    } else if (Math.random() < 0.1) { // 10% chance to clear incident
+    } else if (Math.random() < 0.15) { // chance to clear incident
       state.incident_type = 'none';
     }
 
