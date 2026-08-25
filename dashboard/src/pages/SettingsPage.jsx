@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Check, RotateCcw, Save, Radio, ShieldAlert, SlidersHorizontal } from 'lucide-react';
+import SummaryCard from '../components/SummaryCard';
 
 const DEFAULTS = { idleThreshold: 3, alertSound: true, autoRefresh: true, refreshInterval: 3, darkMode: false, batteryThreshold: 20 };
 
@@ -14,10 +15,10 @@ const SettingsPage = () => {
   return <div className="page-content">
     <div className="page-header"><h2>Settings</h2><p className="page-subtitle">Configure monitoring behavior, alert thresholds, and system connections</p></div>
     <div className="summary-row">
-      <div className="summary-card"><div className="summary-value green">{settings.autoRefresh ? 'ON' : 'OFF'}</div><div className="summary-label">Auto Refresh</div></div>
-      <div className="summary-card"><div className="summary-value">{settings.refreshInterval}s</div><div className="summary-label">Refresh Interval</div></div>
-      <div className="summary-card"><div className="summary-value amber">{settings.idleThreshold}m</div><div className="summary-label">Idle Threshold</div></div>
-      <div className="summary-card"><div className={`summary-value ${isFirebaseConfigured ? 'green' : 'amber'}`}>{isFirebaseConfigured ? 'LIVE' : 'MOCK'}</div><div className="summary-label">Data Connection</div></div>
+      <SummaryCard label="Auto Refresh" value={settings.autoRefresh ? 'ON' : 'OFF'} status="Session setting" icon="activity" tone="green" />
+      <SummaryCard label="Refresh Interval" value={`${settings.refreshInterval}s`} status="Update frequency" icon="clock" tone="blue" />
+      <SummaryCard label="Idle Threshold" value={`${settings.idleThreshold}m`} status="Alert threshold" icon="alerts" tone="amber" />
+      <SummaryCard label="Data Connection" value={isFirebaseConfigured ? 'LIVE' : 'MOCK'} status={isFirebaseConfigured ? 'Firebase connected' : 'Simulator mode'} icon="radio" tone={isFirebaseConfigured ? 'green' : 'amber'} />
     </div>
     <div className="settings-actions"><span className={saved ? 'settings-saved' : 'text-muted'}>{saved && <Check size={15} />} {saved ? 'Settings saved for this session' : 'Changes apply to this dashboard session'}</span><div><button className="settings-button secondary" onClick={reset}><RotateCcw size={15} /> Reset</button><button className="settings-button" onClick={save}><Save size={15} /> Save Changes</button></div></div>
     <div className="settings-grid">

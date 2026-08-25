@@ -9,6 +9,7 @@ import PerformancePage from './pages/PerformancePage';
 import RoundsPage from './pages/RoundsPage';
 import BreaksPage from './pages/BreaksPage';
 import ReportsPage from './pages/ReportsPage';
+import CorrelationDetailPage from './pages/CorrelationDetailPage';
 import AlertsPage from './pages/AlertsPage';
 import SettingsPage from './pages/SettingsPage';
 import WorkerDetail from './components/WorkerDetail';
@@ -80,11 +81,18 @@ const PAGE_TITLES = {
   dashboard: 'Dashboard', machines: 'Machines', operators: 'Operators',
   performance: 'Performance', rounds: 'Rounds', breaks: 'Breaks & Downtime',
   reports: 'Reports', alerts: 'Alerts', settings: 'Settings',
+  correlation: 'Correlation Investigation',
 };
+const PAGE_IDS = new Set(Object.keys(PAGE_TITLES));
+
+function getPageFromHash() {
+  const page = window.location.hash.replace(/^#\/?/, '');
+  return PAGE_IDS.has(page) ? page : 'dashboard';
+}
 
 function App() {
   const [workers, setWorkers] = useState({});
-  const [activePage, setActivePage] = useState('dashboard');
+  const [activePage, setActivePage] = useState(getPageFromHash);
   const [selectedWorker, setSelectedWorker] = useState(null);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -125,7 +133,20 @@ function App() {
     return acc;
   }, []);
 
-  const handleNavigate = (page) => { setActivePage(page); setSelectedWorker(null); };
+  useEffect(() => {
+    const handleHashChange = () => {
+      setActivePage(getPageFromHash());
+      setSelectedWorker(null);
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const handleNavigate = (page) => {
+    if (!PAGE_IDS.has(page)) return;
+    setSelectedWorker(null);
+    window.location.hash = page;
+  };
 
   if (loading) return <div className="app-layout"><div className="main-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading\u2026</div></div>;
 
@@ -137,7 +158,8 @@ function App() {
       case 'performance': return <PerformancePage workers={workers} />;
       case 'rounds':      return <RoundsPage workers={workers} />;
       case 'breaks':      return <BreaksPage workers={workers} />;
-      case 'reports':     return <ReportsPage />;
+      case 'reports':     return <ReportsPage workers={workers} onOpenCorrelation={() => handleNavigate('correlation')} />;
+      case 'correlation': return <CorrelationDetailPage workers={workers} onBack={() => handleNavigate('reports')} />;
       case 'alerts':      return <AlertsPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} />;
       case 'settings':    return <SettingsPage />;
       default:            return <DashboardPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} />;

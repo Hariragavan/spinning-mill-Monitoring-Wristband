@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import SummaryCard from '../components/SummaryCard';
 import { Search, SlidersHorizontal, ArrowUpDown, AlertTriangle, CheckCircle2, ChevronRight } from 'lucide-react';
 
 const SEVERITY = {
@@ -48,10 +49,10 @@ const AlertsPage = ({ workers, onWorkerClick }) => {
   return <div className="page-content">
     <div className="page-header"><h2>Alerts</h2><p className="page-subtitle">Prioritized incidents and system events requiring supervisor attention</p></div>
     <div className="summary-row">
-      <div className="summary-card"><div className="summary-value">{allAlerts.length}</div><div className="summary-label">Total Alerts Today</div></div>
-      <div className="summary-card"><div className="summary-value red">{criticalCount}</div><div className="summary-label">Critical</div></div>
-      <div className="summary-card"><div className="summary-value amber">{warningCount}</div><div className="summary-label">Warnings</div></div>
-      <div className="summary-card"><div className="summary-value" style={{ color: activeCount ? 'var(--red)' : 'var(--green)' }}>{activeCount}</div><div className="summary-label">Active Now</div></div>
+      <SummaryCard label="Total Alerts Today" value={allAlerts.length} status="All events" icon="alerts" tone="blue" />
+      <SummaryCard label="Critical" value={criticalCount} status="Immediate review" icon="alerts" tone="red" />
+      <SummaryCard label="Warnings" value={warningCount} status="Monitor closely" icon="activity" tone="amber" />
+      <SummaryCard label="Active Now" value={activeCount} status="Live alerts" icon="radio" tone={activeCount ? 'red' : 'green'} />
     </div>
     <div className="operator-toolbar">
       <label className="operator-search"><Search size={16} aria-hidden="true" /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search alerts or sources" aria-label="Search alerts" /></label>

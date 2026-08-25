@@ -1,4 +1,5 @@
 import React from 'react';
+import SummaryCard from '../components/SummaryCard';
 import { AreaChart, Area, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 
 const COVERAGE_DATA = [
@@ -21,14 +22,6 @@ const BREAK_CATEGORIES = [
 ];
 const COLORS = ['#10b981', '#3b82f6', '#ef4444'];
 
-const LIVE_ON_BREAK = [
-  { worker: 'Alex P.',   type: 'Tea Break', durationMins: 8,  zone: 'Canteen' },
-  { worker: 'Maria S.',  type: 'Restroom',  durationMins: 4,  zone: 'M3-B2' },
-  { worker: 'Raj K.',    type: 'Idle',      durationMins: 19, zone: 'M2-A1' }, // Over 15 mins!
-  { worker: 'David W.',  type: 'Idle',      durationMins: 22, zone: 'M1-A4' }, // Over 15 mins!
-  { worker: 'Sarah J.',  type: 'Tea Break', durationMins: 12, zone: 'Canteen' },
-];
-
 const DOWNTIME_EVENTS = [
   { time: '15:10', machine: 'M2', reason: 'Spindle Jam',       duration: '8 min',  status: 'Resolved' },
   { time: '13:25', machine: 'M3', reason: 'Yarn Break',        duration: '14 min', status: 'Active' },
@@ -37,8 +30,17 @@ const DOWNTIME_EVENTS = [
 ];
 
 const BreaksPage = ({ workers }) => {
-  const currentOnBreak = LIVE_ON_BREAK.length;
-  const unauthorizedCount = LIVE_ON_BREAK.filter(b => b.durationMins > 15).length;
+  const workerList = Object.entries(workers).filter(([, data]) => data?.live);
+  const liveOnBreak = workerList
+    .filter(([, data]) => data.live.motion_state === 'stationary' || data.live.break_mode !== 'none')
+    .map(([id, data]) => ({
+      worker: `W${id.split('_')[1]}`,
+      type: data.live.break_mode !== 'none' ? data.live.break_mode : 'Idle',
+      durationMins: Math.floor((data.live.break_duration_sec || data.live.idle_duration_sec || 0) / 60),
+      zone: data.live.last_beacon_id || 'Unknown',
+    }));
+  const currentOnBreak = liveOnBreak.length;
+  const unauthorizedCount = liveOnBreak.filter(b => b.durationMins > 15).length;
 
   return (
     <div className="page-content">
@@ -48,10 +50,10 @@ const BreaksPage = ({ workers }) => {
       </div>
 
       <div className="summary-row">
-        <div className="summary-card"><div className="summary-value" style={{color: '#3b82f6'}}>60</div><div className="summary-label">Total Shift Workers</div></div>
-        <div className="summary-card"><div className="summary-value" style={{color: '#10b981'}}>{60 - currentOnBreak}</div><div className="summary-label">Currently Active</div></div>
-        <div className="summary-card"><div className="summary-value" style={{color: '#f59e0b'}}>{currentOnBreak}</div><div className="summary-label">Currently On Break</div></div>
-        <div className="summary-card" style={{background: '#fef2f2', border: '1px solid #fecaca'}}><div className="summary-value" style={{color: '#ef4444'}}>{unauthorizedCount}</div><div className="summary-label" style={{color: '#991b1b'}}>Unauthorized (&gt;15m)</div></div>
+        <SummaryCard label="Total Shift Workers" value={workerList.length} status="Shift roster" icon="user" tone="blue" />
+        <SummaryCard label="Currently Active" value={workerList.length - currentOnBreak} status="On floor" icon="activity" tone="green" />
+        <SummaryCard label="Currently On Break" value={currentOnBreak} status="Live status" icon="clock" tone="amber" />
+        <SummaryCard label="Unauthorized (&gt;15m)" value={unauthorizedCount} status="Review required" icon="alerts" tone="red" />
       </div>
 
       {/* Top Split: Coverage and Categories */}
@@ -112,7 +114,7 @@ const BreaksPage = ({ workers }) => {
           <table>
             <thead><tr><th>Operator</th><th>Type</th><th>Duration</th><th>Zone / Last Seen</th><th>Status</th></tr></thead>
             <tbody>
-              {LIVE_ON_BREAK.map((b, i) => {
+              {liveOnBreak.map((b, i) => {
                 const isUnauthorized = b.durationMins > 15;
                 return (
                   <tr key={i} className={isUnauthorized ? 'row-highlight' : ''}>
@@ -128,6 +130,7 @@ const BreaksPage = ({ workers }) => {
                   </tr>
                 );
               })}
+              {liveOnBreak.length === 0 && <tr><td colSpan="5" className="text-muted">No workers currently on break or idle.</td></tr>}
             </tbody>
           </table>
         </div>

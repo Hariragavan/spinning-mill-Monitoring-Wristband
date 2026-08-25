@@ -1,4 +1,5 @@
 import React from 'react';
+import SummaryCard from '../components/SummaryCard';
 
 const MACHINE_DATA = [
   { id: 'M1', name: 'Machine 1', type: 'Ring Spinning', length: '52m', spindles: 480, beacons: 8, zone: 'Zone A' },
@@ -40,22 +41,10 @@ const MachinesPage = ({ workers }) => {
 
       {/* Summary cards */}
       <div className="summary-row">
-        <div className="summary-card">
-          <div className="summary-value">{MACHINE_DATA.length}</div>
-          <div className="summary-label">Total Machines</div>
-        </div>
-        <div className="summary-card">
-          <div className="summary-value green">{MACHINE_DATA.filter((_, i) => getStatus(MACHINE_DATA[i].id) === 'running').length}</div>
-          <div className="summary-label">Running</div>
-        </div>
-        <div className="summary-card">
-          <div className="summary-value amber">{MACHINE_DATA.filter((_, i) => getStatus(MACHINE_DATA[i].id) === 'idle').length}</div>
-          <div className="summary-label">Idle</div>
-        </div>
-        <div className="summary-card">
-          <div className="summary-value red">{MACHINE_DATA.filter((_, i) => getStatus(MACHINE_DATA[i].id) === 'maintenance').length}</div>
-          <div className="summary-label">Maintenance</div>
-        </div>
+        <SummaryCard label="Total Machines" value={MACHINE_DATA.length} status="Configured" icon="factory" tone="blue" />
+        <SummaryCard label="Running" value={MACHINE_DATA.filter((_, i) => getStatus(MACHINE_DATA[i].id) === 'running').length} status="Online now" icon="activity" tone="green" />
+        <SummaryCard label="Idle" value={MACHINE_DATA.filter((_, i) => getStatus(MACHINE_DATA[i].id) === 'idle').length} status="Needs monitoring" icon="clock" tone="amber" />
+        <SummaryCard label="Maintenance" value={MACHINE_DATA.filter((_, i) => getStatus(MACHINE_DATA[i].id) === 'maintenance').length} status="Review required" icon="settings" tone="red" />
       </div>
 
       {/* Machine Table */}

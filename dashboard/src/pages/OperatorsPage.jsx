@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Search, SlidersHorizontal, ArrowUpDown, ChevronRight, AlertTriangle, UserRound } from 'lucide-react';
+import SummaryCard from '../components/SummaryCard';
 
 const WORKER_PROFILES = {
   worker_1: { name: 'Alex Patel',  role: 'Senior Operator', shift: 'Morning (6AM\u20132PM)',  avatar: 'AP' },
@@ -57,22 +58,10 @@ const OperatorsPage = ({ workers, onWorkerClick }) => {
       </div>
 
       <div className="summary-row">
-        <div className="summary-card">
-          <div className="summary-value">{mergedList.length}</div>
-          <div className="summary-label">Registered Operators</div>
-        </div>
-        <div className="summary-card">
-          <div className="summary-value green">{liveCount}</div>
-          <div className="summary-label">Live Wristbands</div>
-        </div>
-        <div className="summary-card">
-          <div className="summary-value green">{activeCount}</div>
-          <div className="summary-label">Currently Active</div>
-        </div>
-        <div className="summary-card">
-          <div className="summary-value red">{attentionCount}</div>
-          <div className="summary-label">Needs Attention</div>
-        </div>
+        <SummaryCard label="Registered Operators" value={mergedList.length} status="Team roster" icon="user" tone="blue" />
+        <SummaryCard label="Live Wristbands" value={liveCount} status="Connected now" icon="radio" tone="green" />
+        <SummaryCard label="Currently Active" value={activeCount} status="On floor" icon="activity" tone="green" />
+        <SummaryCard label="Needs Attention" value={attentionCount} status="Review required" icon="alerts" tone="red" />
       </div>
 
       <div className="operator-toolbar">

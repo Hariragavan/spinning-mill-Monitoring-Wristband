@@ -1,30 +1,7 @@
 import React, { useState } from 'react';
+import { AlertTriangle, CheckCircle2, UserRound } from 'lucide-react';
+import SummaryCard from '../components/SummaryCard';
 import { PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ComposedChart, Line, Bar } from 'recharts';
-
-const HOURLY_DATA = [
-  { period: '05:30', rpm: 60, maintenance: 0, doffing: 0, cleaning: 0, mech: 0, elec: 0, break: 0, meeting: 0 },
-  { period: '09:30', rpm: 55, maintenance: 0, doffing: 0, cleaning: 5, mech: 0, elec: 0, break: 0, meeting: 0 },
-  { period: '10:30', rpm: 5, maintenance: 0, doffing: 0, cleaning: 55, mech: 0, elec: 0, break: 0, meeting: 0 },
-  { period: '15:30', rpm: 35, maintenance: 0, doffing: 0, cleaning: 0, mech: 0, elec: 0, break: 25, meeting: 0 },
-  { period: '16:30', rpm: 25, maintenance: 35, doffing: 0, cleaning: 0, mech: 0, elec: 0, break: 0, meeting: 0 },
-  { period: '21:30', rpm: 52, maintenance: 0, doffing: 0, cleaning: 0, mech: 8, elec: 0, break: 0, meeting: 0 },
-  { period: '22:30', rpm: 60, maintenance: 0, doffing: 0, cleaning: 0, mech: 0, elec: 0, break: 0, meeting: 0 },
-  { period: '23:30', rpm: 31, maintenance: 0, doffing: 29, cleaning: 0, mech: 0, elec: 0, break: 0, meeting: 0 },
-];
-
-const DAILY_DATA = [
-  { period: 'Mon', rpm: 1100, maintenance: 45, doffing: 120, cleaning: 60, mech: 15, elec: 0, break: 60, meeting: 40 },
-  { period: 'Tue', rpm: 1250, maintenance: 0, doffing: 100, cleaning: 40, mech: 0, elec: 0, break: 50, meeting: 0 },
-  { period: 'Wed', rpm: 980, maintenance: 120, doffing: 150, cleaning: 90, mech: 40, elec: 20, break: 40, meeting: 0 },
-  { period: 'Thu', rpm: 1300, maintenance: 0, doffing: 90, cleaning: 30, mech: 0, elec: 0, break: 20, meeting: 0 },
-  { period: 'Fri', rpm: 1150, maintenance: 30, doffing: 110, cleaning: 50, mech: 10, elec: 10, break: 60, meeting: 20 },
-];
-
-const MONTHLY_DATA = [
-  { period: 'Jan', rpm: 32000, maintenance: 1200, doffing: 3500, cleaning: 1500, mech: 400, elec: 150, break: 1800, meeting: 600 },
-  { period: 'Feb', rpm: 29000, maintenance: 1800, doffing: 3100, cleaning: 1400, mech: 800, elec: 300, break: 1600, meeting: 500 },
-  { period: 'Mar', rpm: 35000, maintenance: 900, doffing: 3800, cleaning: 1600, mech: 200, elec: 100, break: 1900, meeting: 700 },
-];
 
 const DOWNTIME_DATA = [
   { name: 'Cleaning', value: 45 },
@@ -45,56 +22,78 @@ const CORRELATION_DATA = [
   { day: 'Sun', patrols: 29, downtime: 85 },
 ];
 
-const DurationCell = ({ value, color, maxVal }) => {
-  const displayVal = value >= 600 ? Math.floor(value / 60) + 'h' : value + 'm';
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-      <div style={{
-        width: value > 0 ? `${Math.max(4, (value / maxVal) * 50)}px` : '4px', 
-        height: '4px', 
-        backgroundColor: value > 0 ? color : '#cbd5e1',
-        borderRadius: '2px',
-        transition: 'width 0.3s'
-      }} />
-      <span style={{ fontSize: '0.75rem', color: value > 0 ? '#334155' : '#94a3b8', minWidth: '24px' }}>{displayVal}</span>
-    </div>
-  );
-};
-
-const WORKER_SUMMARY = [
-  { name: 'Alex P.',  daysWorked: 6, avgHours: '7.8 hr', totalRounds: 72, onTimeRate: '100%' },
-  { name: 'Raj K.',   daysWorked: 5, avgHours: '7.5 hr', totalRounds: 58, onTimeRate: '80%' },
-  { name: 'Maria S.', daysWorked: 6, avgHours: '7.2 hr', totalRounds: 64, onTimeRate: '100%' },
-];
-
-const ReportsPage = () => {
-  const [activeTab, setActiveTab] = useState('hourly');
-  const [filterDate, setFilterDate] = useState('Today');
+const ReportsPage = ({ workers, onOpenCorrelation }) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const [startDate, setStartDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
   const [filterMachine, setFilterMachine] = useState('All');
   const [filterOperator, setFilterOperator] = useState('All');
+  const [reportStatus, setReportStatus] = useState('Needs review');
+  const names = { worker_1: 'Alex P.', worker_2: 'Raj K.', worker_3: 'Maria S.' };
+  const workerList = Object.entries(workers).filter(([, data]) => data?.live);
+  const filteredWorkers = workerList.filter(([id, data]) => {
+    const machineMatches = filterMachine === 'All' || data.live.current_machine === filterMachine.replace('Machine ', '');
+    const operatorMatches = filterOperator === 'All' || names[id] === filterOperator;
+    return machineMatches && operatorMatches;
+  });
+  const activeWorkers = filteredWorkers.filter(([, data]) => data.live.motion_state === 'walking').length;
+  const averageBattery = filteredWorkers.length ? filteredWorkers.reduce((sum, [, data]) => sum + (data.live.wristband_battery_pct || 0), 0) / filteredWorkers.length : 0;
+  const workerSummary = filteredWorkers.map(([id, data]) => {
+    const live = data.live;
+    const shiftHours = Math.max(0, (live.timestamp - (live.login_timestamp || live.timestamp)) / 3600000);
+    return { name: names[id] || id, daysWorked: 1, avgHours: `${shiftHours.toFixed(1)} hr`, totalRounds: live.lap_count || 0, onTimeRate: live.incident_type === 'none' ? '100%' : 'Needs review' };
+  });
 
-  let activeData = HOURLY_DATA;
-  let maxVal = 60;
-  if (activeTab === 'daily') {
-    activeData = DAILY_DATA;
-    maxVal = 1440;
-  } else if (activeTab === 'monthly') {
-    activeData = MONTHLY_DATA;
-    maxVal = 43200;
-  }
+  const activityRows = filteredWorkers
+    .map(([id, data]) => {
+      const live = data.live;
+      const timestamp = live.timestamp || 0;
+      const date = timestamp ? new Date(timestamp) : null;
+      const idleMinutes = Math.floor((live.idle_duration_sec || 0) / 60);
+      const activity = live.incident_type !== 'none'
+        ? 'Incident response'
+        : live.break_mode !== 'none'
+          ? 'Break'
+          : live.motion_state === 'stationary'
+            ? 'Idle'
+            : 'Patrol';
+      return {
+        id,
+        date: date ? date.toISOString().slice(0, 10) : startDate,
+        time: date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'Unknown',
+        operator: names[id] || id,
+        machine: live.current_machine || 'Unknown',
+        activity,
+        output: live.lap_count || 0,
+        expectedOutput: Math.max(live.lap_count || 0, Math.floor((live.timestamp - (live.login_timestamp || live.timestamp)) / 3600000) * 8),
+        efficiency: live.motion_state === 'walking' ? 100 : 0,
+        idleMinutes,
+        reason: live.incident_type !== 'none' ? live.incident_type.replaceAll('_', ' ') : idleMinutes > 0 ? 'Stationary activity' : 'Normal operation',
+        totalMinutes: Math.max(0, Math.floor((timestamp - (live.login_timestamp || timestamp)) / 60000)),
+      };
+    })
+    .filter(row => row.date >= startDate && row.date <= endDate);
 
+  const totalExpectedOutput = activityRows.reduce((sum, row) => sum + row.expectedOutput, 0);
+  const totalActualOutput = activityRows.reduce((sum, row) => sum + row.output, 0);
+  const lostUnits = Math.max(0, totalExpectedOutput - totalActualOutput);
+  const causeSummary = activityRows.reduce((causes, row) => {
+    causes[row.reason] = (causes[row.reason] || 0) + 1;
+    return causes;
+  }, {});
+  const topCause = Object.entries(causeSummary).sort(([, first], [, second]) => second - first)[0];
+  const reviewOwner = activityRows.some(row => row.activity === 'Incident response') ? 'Maintenance supervisor' : activityRows.some(row => row.activity === 'Idle' || row.activity === 'Break') ? 'Shift supervisor' : 'Production manager';
   const handleExportCSV = () => {
-    let csv = "Period,RPM,Maintenance,Doffing,Cleaning,Mech Break,Elec Break,Break,Meeting,Total\n";
-    activeData.forEach(r => {
-      const total = r.rpm + r.maintenance + r.doffing + r.cleaning + r.mech + r.elec + r.break + r.meeting;
-      csv += `${r.period},${r.rpm},${r.maintenance},${r.doffing},${r.cleaning},${r.mech},${r.elec},${r.break},${r.meeting},${total}\n`;
+    let csv = "Date,Time,Operator,Machine,Activity,Actual Output,Expected Output,Efficiency,Idle/Break (min),Incident or Reason,Total Activity (min)\n";
+    activityRows.forEach(row => {
+      csv += `${row.date},${row.time},${row.operator},${row.machine},${row.activity},${row.output},${row.expectedOutput},${row.efficiency}%,${row.idleMinutes},${row.reason},${row.totalMinutes}\n`;
     });
     
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `mode_duration_${activeTab}.csv`);
+    link.setAttribute("download", `worker_activity_${startDate}_to_${endDate}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -110,12 +109,12 @@ const ReportsPage = () => {
         
         {/* Filter Bar */}
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <select value={filterDate} onChange={(e) => setFilterDate(e.target.value)} style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', background: '#fff', fontSize: '0.85rem' }}>
-            <option>Today</option>
-            <option>Last 7 Days</option>
-            <option>This Month</option>
-            <option>Custom Range...</option>
-          </select>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#64748b' }}>Start date
+            <input type="date" value={startDate} max={endDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', background: '#fff', fontSize: '0.85rem' }} />
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#64748b' }}>End date
+            <input type="date" value={endDate} min={startDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: '8px 10px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', background: '#fff', fontSize: '0.85rem' }} />
+          </label>
           <select value={filterMachine} onChange={(e) => setFilterMachine(e.target.value)} style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #e2e8f0', outline: 'none', background: '#fff', fontSize: '0.85rem' }}>
             <option value="All">All Machines</option>
             <option>Machine M1</option>
@@ -137,21 +136,26 @@ const ReportsPage = () => {
 
       {/* OEE KPI Summary Row */}
       <div className="summary-row">
-        <div className="summary-card" style={{ background: '#dbeafe', color: '#1e40af' }}>
-          <div className="summary-value">92.4%</div>
-          <div className="summary-label">Availability (Uptime)</div>
+        <SummaryCard label="Availability (Uptime)" value={filteredWorkers.length ? `${Math.round((activeWorkers / filteredWorkers.length) * 1000) / 10}%` : '0%'} status="Live activity" icon="activity" tone="blue" />
+        <SummaryCard label="Performance (Battery)" value={`${Math.round(averageBattery * 10) / 10}%`} status="Device readiness" icon="battery" tone="green" />
+        <SummaryCard label="Actual Patrol Output" value={totalActualOutput} status="Selected date range" icon="route" tone="amber" />
+        <SummaryCard label="Estimated Lost Units" value={lostUnits} status="Needs investigation" icon="alerts" tone="red" />
+      </div>
+
+      <div className="bottom-split">
+        <div className="card">
+          <div className="card-title"><AlertTriangle size={17} /> Production delay explanation</div>
+          <div className="data-row"><span className="data-label">Main observed cause</span><strong>{topCause ? topCause[0] : 'No delay signal'}</strong></div>
+          <div className="data-row"><span className="data-label">Events in selected range</span><strong>{activityRows.length}</strong></div>
+          <div className="data-row"><span className="data-label">Expected output</span><strong>{totalExpectedOutput} patrols</strong></div>
+          <div className="data-row"><span className="data-label">Actual output</span><strong>{totalActualOutput} patrols</strong></div>
         </div>
-        <div className="summary-card" style={{ background: '#dcfce7', color: '#166534' }}>
-          <div className="summary-value">95.1%</div>
-          <div className="summary-label">Performance (RPM vs Target)</div>
-        </div>
-        <div className="summary-card" style={{ background: '#fef3c7', color: '#92400e' }}>
-          <div className="summary-value">98.5%</div>
-          <div className="summary-label">Quality (Good Yield)</div>
-        </div>
-        <div className="summary-card" style={{ background: '#1e3a8a', color: '#ffffff' }}>
-          <div className="summary-value" style={{ color: '#ffffff' }}>86.5%</div>
-          <div className="summary-label" style={{ color: '#cbd5e1' }}>Overall OEE Score</div>
+        <div className="card">
+          <div className="card-title"><UserRound size={17} /> Who should review it?</div>
+          <div className="data-row"><span className="data-label">Recommended owner</span><strong>{reviewOwner}</strong></div>
+          <div className="data-row"><span className="data-label">Reason</span><span>{topCause ? topCause[0] : 'No current issue detected'}</span></div>
+          <button className="settings-button" onClick={() => setReportStatus('Review assigned to ' + reviewOwner)}><CheckCircle2 size={15} /> Assign review</button>
+          <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '8px' }}>{reportStatus}</div>
         </div>
       </div>
 
@@ -162,6 +166,7 @@ const ReportsPage = () => {
         <div className="card">
           <div className="card-title" style={{ borderBottom: 'none', paddingBottom: 0, marginBottom: '6px' }}>Patrols vs. Breakdowns Correlation</div>
           <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '20px' }}>Does a lower number of patrol rounds lead to higher machine downtime?</div>
+          <button className="back-button" onClick={onOpenCorrelation} style={{ marginBottom: '12px' }}>Open detailed investigation</button>
           <div style={{ width: '100%', height: 260 }}>
             <ResponsiveContainer>
               <ComposedChart data={CORRELATION_DATA} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
@@ -196,54 +201,33 @@ const ReportsPage = () => {
         </div>
       </div>
 
-      {/* Mode Duration Analytics */}
+      {/* Date-filtered worker activity report */}
       <div className="card table-card">
         <div style={{ padding: '20px 24px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #f1f5f9' }}>
           <div>
-            <div className="card-title" style={{ padding: 0, border: 'none', marginBottom: '4px', fontSize: '0.9rem' }}>MODE DURATION ANALYTICS</div>
-            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>How many minutes the machine stayed in each mode</div>
-          </div>
-          <div className="toggle-group" style={{ display: 'flex', background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '8px', overflow: 'hidden' }}>
-            <button onClick={() => setActiveTab('hourly')} style={{ padding: '6px 14px', fontSize: '0.75rem', fontWeight: activeTab === 'hourly' ? 600 : 500, border: 'none', background: activeTab === 'hourly' ? '#3b82f6' : '#fff', color: activeTab === 'hourly' ? '#fff' : '#64748b', cursor: 'pointer' }}>Hourly</button>
-            <button onClick={() => setActiveTab('daily')} style={{ padding: '6px 14px', fontSize: '0.75rem', fontWeight: activeTab === 'daily' ? 600 : 500, border: 'none', background: activeTab === 'daily' ? '#3b82f6' : '#fff', color: activeTab === 'daily' ? '#fff' : '#64748b', borderLeft: '1px solid #e2e8f0', cursor: 'pointer' }}>Daily</button>
-            <button onClick={() => setActiveTab('monthly')} style={{ padding: '6px 14px', fontSize: '0.75rem', fontWeight: activeTab === 'monthly' ? 600 : 500, border: 'none', background: activeTab === 'monthly' ? '#3b82f6' : '#fff', color: activeTab === 'monthly' ? '#fff' : '#64748b', borderLeft: '1px solid #e2e8f0', cursor: 'pointer' }}>Monthly</button>
+            <div className="card-title" style={{ padding: 0, border: 'none', marginBottom: '4px', fontSize: '0.9rem' }}>WORKER ACTIVITY & PRODUCTION</div>
+            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>Live activity, patrol output, and reasons for lost production from {startDate} to {endDate}</div>
           </div>
         </div>
         <div style={{ overflowX: 'auto' }}>
-          <table style={{ minWidth: '900px' }}>
+          <table style={{ minWidth: '1180px' }}>
             <thead>
               <tr>
-                <th>Period</th>
-                <th>RPM</th>
-                <th>Maintenance</th>
-                <th>Doffing</th>
-                <th>Cleaning</th>
-                <th>Mech Breaking</th>
-                <th>Elec Breaking</th>
-                <th>Break</th>
-                <th>Meeting</th>
-                <th>Total</th>
+                <th>Date</th><th>Time</th><th>Operator</th><th>Machine</th><th>Activity</th>
+                <th>Actual Output</th><th>Expected Output</th><th>Efficiency</th><th>Idle / Break</th><th>Incident or Reason</th><th>Total Activity</th>
               </tr>
             </thead>
             <tbody>
-              {activeData.map((r, i) => {
-                const total = r.rpm + r.maintenance + r.doffing + r.cleaning + r.mech + r.elec + r.break + r.meeting;
-                const totalDisplay = total >= 600 ? Math.floor(total / 60) + 'h' : total + 'm';
+              {activityRows.map(row => {
                 return (
-                  <tr key={i}>
-                    <td className="text-muted" style={{ fontSize: '0.75rem' }}>{r.period}</td>
-                    <td><DurationCell value={r.rpm} color="#3b82f6" maxVal={maxVal} /></td>
-                    <td><DurationCell value={r.maintenance} color="#8b5cf6" maxVal={maxVal} /></td>
-                    <td><DurationCell value={r.doffing} color="#10b981" maxVal={maxVal} /></td>
-                    <td><DurationCell value={r.cleaning} color="#f59e0b" maxVal={maxVal} /></td>
-                    <td><DurationCell value={r.mech} color="#ef4444" maxVal={maxVal} /></td>
-                    <td><DurationCell value={r.elec} color="#ef4444" maxVal={maxVal} /></td>
-                    <td><DurationCell value={r.break} color="#64748b" maxVal={maxVal} /></td>
-                    <td><DurationCell value={r.meeting} color="#14b8a6" maxVal={maxVal} /></td>
-                    <td style={{ fontWeight: 700, fontSize: '0.8rem', color: '#1e293b' }}>{totalDisplay}</td>
+                  <tr key={row.id} className={row.activity === 'Incident response' || row.activity === 'Idle' ? 'row-highlight' : ''}>
+                    <td className="text-muted">{row.date}</td><td className="text-muted">{row.time}</td><td className="cell-primary">{row.operator}</td>
+                    <td>{row.machine}</td><td>{row.activity}</td><td>{row.output} rounds</td><td>{row.expectedOutput} rounds</td><td>{row.efficiency}%</td>
+                    <td>{row.idleMinutes} min</td><td>{row.reason}</td><td>{row.totalMinutes} min</td>
                   </tr>
                 );
               })}
+              {activityRows.length === 0 && <tr><td colSpan="11" className="text-muted">No worker activity is available from {startDate} to {endDate}.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -257,7 +241,7 @@ const ReportsPage = () => {
             <tr><th>Operator</th><th>Days Worked</th><th>Avg Hours/Day</th><th>Total Rounds</th><th>On-Time Rate</th></tr>
           </thead>
           <tbody>
-            {WORKER_SUMMARY.map((w, i) => (
+            {workerSummary.map((w, i) => (
               <tr key={i}>
                 <td className="cell-primary">{w.name}</td>
                 <td>{w.daysWorked}/7</td>
@@ -266,6 +250,7 @@ const ReportsPage = () => {
                 <td><span className={w.onTimeRate === '100%' ? 'text-green' : 'text-amber'}>{w.onTimeRate}</span></td>
               </tr>
             ))}
+            {workerSummary.length === 0 && <tr><td colSpan="5" className="text-muted">No workers match the selected filters.</td></tr>}
           </tbody>
         </table>
       </div>

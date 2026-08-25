@@ -1,25 +1,9 @@
-import React from 'react';
-import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, BarChart, Bar, RadialBarChart, RadialBar, Cell } from 'recharts';
+import React, { useState } from 'react';
+import SummaryCard from '../components/SummaryCard';
+import { ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, BarChart, Bar, Cell } from 'recharts';
 
 const NAMES = { worker_1: 'Alex P.', worker_2: 'Raj K.', worker_3: 'Maria S.' };
-
-const SCATTER_DATA = [
-  { time: 8.0, duration: 6.2, worker: 'Alex P.' },
-  { time: 8.5, duration: 6.5, worker: 'Raj K.' },
-  { time: 9.0, duration: 6.1, worker: 'Maria S.' },
-  { time: 9.5, duration: 6.8, worker: 'Alex P.' },
-  { time: 10.0, duration: 7.2, worker: 'Raj K.' },
-  { time: 10.5, duration: 5.9, worker: 'Maria S.' },
-  { time: 11.0, duration: 18.5, worker: 'Alex P.' }, // Anomaly
-  { time: 11.5, duration: 6.6, worker: 'Raj K.' },
-  { time: 12.0, duration: 6.3, worker: 'Maria S.' },
-  { time: 13.0, duration: 6.7, worker: 'Alex P.' },
-  { time: 13.5, duration: 14.2, worker: 'Raj K.' }, // Anomaly
-  { time: 14.0, duration: 6.0, worker: 'Maria S.' },
-  { time: 14.5, duration: 6.4, worker: 'Alex P.' },
-  { time: 15.0, duration: 6.9, worker: 'Raj K.' },
-  { time: 15.5, duration: 6.2, worker: 'Maria S.' },
-];
+const BEACONS = ['A1', 'A2', 'A3', 'A4', 'B4', 'B3', 'B2', 'B1'];
 
 const BEACON_MISSES = [
   { name: 'B1 (Front Left)', misses: 2 },
@@ -32,36 +16,36 @@ const BEACON_MISSES = [
   { name: 'B8 (Side Left)', misses: 2 },
 ];
 
-const PROGRESS_DISTRIBUTION = [
-  { group: '0-5 Rounds', workers: 4 },
-  { group: '6-10 Rounds', workers: 12 },
-  { group: '11-14 Rounds', workers: 28 },
-  { group: '15+ (Goal)', workers: 16 },
-];
-
 const RoundsPage = ({ workers }) => {
+  const [selectedMachine, setSelectedMachine] = useState('M1');
   const workerList = Object.entries(workers).filter(([, d]) => d?.live);
-  const totalRounds = workerList.reduce((s, [, d]) => s + d.live.lap_count, 0);
+  const selectedMachineWorkers = workerList.filter(([, data]) => data.live.current_machine === selectedMachine);
+  const selectedBeaconIds = selectedMachineWorkers.map(([, data]) => data.live.last_beacon_id).filter(Boolean);
+  const selectedBeacon = selectedBeaconIds.find(beacon => beacon.startsWith(`${selectedMachine}-`))?.replace(`${selectedMachine}-`, '');
+  const totalRounds = workerList.reduce((sum, [, data]) => sum + (data.live.lap_count || 0), 0);
+  const lapDurations = workerList.map(([, data]) => data.live.lap_duration_sec || 0).filter(Boolean);
+  const averageLapMinutes = lapDurations.length ? lapDurations.reduce((sum, value) => sum + value, 0) / lapDurations.length / 60 : 0;
+  const anomalies = lapDurations.filter(duration => duration > 600).length;
+  const progressDistribution = [
+    { group: '0-5 Rounds', workers: workerList.filter(([, data]) => (data.live.lap_count || 0) <= 5).length },
+    { group: '6-10 Rounds', workers: workerList.filter(([, data]) => data.live.lap_count > 5 && data.live.lap_count <= 10).length },
+    { group: '11-14 Rounds', workers: workerList.filter(([, data]) => data.live.lap_count > 10 && data.live.lap_count < 15).length },
+    { group: '15+ (Goal)', workers: workerList.filter(([, data]) => data.live.lap_count >= 15).length },
+  ];
+  const scatterData = workerList.map(([id, data]) => ({
+    time: new Date(data.live.timestamp || 0).getHours() + new Date(data.live.timestamp || 0).getMinutes() / 60,
+    duration: (data.live.lap_duration_sec || 0) / 60,
+    worker: NAMES[id] || id,
+  }));
 
-  // Generate a fake round log
-  const roundLog = [];
-  workerList.forEach(([id, data]) => {
-    for (let i = 1; i <= data.live.lap_count; i++) {
-      const isAnomaly = Math.random() > 0.9;
-      const mins = isAnomaly ? 12 + Math.floor(Math.random() * 8) : 5 + Math.floor(Math.random() * 3);
-      const secs = Math.floor(Math.random() * 60);
-      const beaconsHit = isAnomaly ? 8 - Math.floor(Math.random() * 4) : 8;
-      roundLog.push({
-        worker: NAMES[id] || id,
-        machine: data.live.current_machine,
-        round: i,
-        duration: `${mins}m ${secs}s`,
-        beaconsHit: beaconsHit,
-        completedAt: new Date(Date.now() - (data.live.lap_count - i) * 420000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      });
-    }
-  });
-  roundLog.reverse();
+  const roundLog = workerList.map(([id, data]) => ({
+    worker: NAMES[id] || id,
+    machine: data.live.current_machine || 'Unknown',
+    round: data.live.lap_count || 0,
+    duration: `${Math.floor((data.live.lap_duration_sec || 0) / 60)}m ${(data.live.lap_duration_sec || 0) % 60}s`,
+    beaconsHit: data.live.last_beacon_id ? 1 : 0,
+    completedAt: 'In progress',
+  }));
 
   return (
     <div className="page-content">
@@ -71,10 +55,10 @@ const RoundsPage = ({ workers }) => {
       </div>
 
       <div className="summary-row">
-        <div className="summary-card"><div className="summary-value">{totalRounds}</div><div className="summary-label">Total Rounds Completed</div></div>
-        <div className="summary-card"><div className="summary-value">4.2%</div><div className="summary-label">Beacon Miss Rate</div></div>
-        <div className="summary-card"><div className="summary-value">6m 42s</div><div className="summary-label">Avg Round Time</div></div>
-        <div className="summary-card" style={{background: '#fef2f2', border: '1px solid #fecaca'}}><div className="summary-value" style={{color: '#ef4444'}}>2</div><div className="summary-label" style={{color: '#991b1b'}}>Time Anomalies Detected</div></div>
+        <SummaryCard label="Total Rounds Completed" value={totalRounds} status="Live patrol count" icon="route" tone="blue" />
+        <SummaryCard label="Beacon Signal Coverage" value={workerList.length ? `${Math.round((workerList.filter(([, data]) => data.live.last_beacon_id).length / workerList.length) * 100)}%` : '0%'} status="Current telemetry" icon="radio" tone="green" />
+        <SummaryCard label="Avg Current Lap Time" value={`${Math.floor(averageLapMinutes)}m ${Math.round((averageLapMinutes % 1) * 60)}s`} status="Live lap timing" icon="clock" tone="amber" />
+        <SummaryCard label="Slow Current Laps" value={anomalies} status="Review required" icon="alerts" tone="red" />
       </div>
 
       {/* Top Split: Scatter and Radial */}
@@ -91,9 +75,7 @@ const RoundsPage = ({ workers }) => {
                 <YAxis dataKey="duration" type="number" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={(v) => `${v}m`} name="Duration" />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} formatter={(val, name) => [name === 'Time of Day' ? `${val}:00` : `${val} mins`, name]} />
                 <Legend />
-                <Scatter name="Alex P." data={SCATTER_DATA.filter(d => d.worker === 'Alex P.')} fill="#3b82f6" shape="circle" />
-                <Scatter name="Raj K." data={SCATTER_DATA.filter(d => d.worker === 'Raj K.')} fill="#10b981" shape="square" />
-                <Scatter name="Maria S." data={SCATTER_DATA.filter(d => d.worker === 'Maria S.')} fill="#f59e0b" shape="triangle" />
+                <Scatter name="Live workers" data={scatterData} fill="#3b82f6" />
               </ScatterChart>
             </ResponsiveContainer>
           </div>
@@ -105,13 +87,13 @@ const RoundsPage = ({ workers }) => {
           <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '4px' }}>Workers mapped by rounds completed (Goal: 15)</div>
           <div style={{ width: '100%', height: 260 }}>
             <ResponsiveContainer>
-              <BarChart data={PROGRESS_DISTRIBUTION} margin={{ top: 20, right: 20, left: -20, bottom: 0 }}>
+              <BarChart data={progressDistribution} margin={{ top: 20, right: 20, left: -20, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                 <XAxis dataKey="group" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
                 <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
                 <Tooltip cursor={{ fill: '#f8fafc' }} formatter={(val) => [`${val} Workers`, 'Count']} />
                 <Bar dataKey="workers" fill="#3b82f6" radius={[4, 4, 0, 0]}>
-                   {PROGRESS_DISTRIBUTION.map((entry, index) => (
+                   {progressDistribution.map((entry, index) => (
                      <Cell key={`cell-${index}`} fill={entry.group === '15+ (Goal)' ? '#10b981' : '#3b82f6'} />
                    ))}
                 </Bar>
@@ -124,34 +106,37 @@ const RoundsPage = ({ workers }) => {
       <div className="bottom-split" style={{ gridTemplateColumns: '2fr 3fr' }}>
         {/* Machine Beacon Heatmap / Path */}
         <div className="card">
-          <div className="card-title">Beacon Path Checkpoints</div>
-          <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '20px' }}>Standard 8-beacon machine layout</div>
+          <div className="card-title" style={{ justifyContent: 'space-between' }}>
+            <span>Beacon Path Checkpoints</span>
+            <select value={selectedMachine} onChange={event => setSelectedMachine(event.target.value)} aria-label="Choose machine for beacon checkpoints" style={{ padding: '6px 9px', border: '1px solid #e2e8f0', borderRadius: '7px', background: '#fff', color: '#334155', fontSize: '0.75rem', fontWeight: 600 }}>
+              {['M1', 'M2', 'M3'].map(machine => <option key={machine} value={machine}>Machine {machine}</option>)}
+            </select>
+          </div>
+          <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '20px' }}>{selectedMachineWorkers.length ? `${selectedMachineWorkers.length} worker${selectedMachineWorkers.length > 1 ? 's' : ''} detected on ${selectedMachine}` : `No worker detected on ${selectedMachine}`} {selectedBeacon ? `• Last beacon ${selectedBeacon}` : ''}</div>
           
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '220px' }}>
             <div style={{ width: '200px', height: '140px', background: '#f8fafc', border: '2px solid #e2e8f0', borderRadius: '12px', position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-              <span style={{ fontWeight: 700, color: '#94a3b8', fontSize: '1.2rem' }}>MACHINE</span>
+              <span style={{ fontWeight: 700, color: '#94a3b8', fontSize: '1.2rem' }}>{selectedMachine}</span>
               
               {/* Beacons */}
               {/* Top Row */}
-              <div style={{ position: 'absolute', top: '-12px', left: '10%', width: 24, height: 24, background: '#10b981', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>1</div>
-              <div style={{ position: 'absolute', top: '-12px', left: '45%', width: 24, height: 24, background: '#10b981', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>2</div>
-              <div style={{ position: 'absolute', top: '-12px', right: '10%', width: 24, height: 24, background: '#10b981', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>3</div>
+              {BEACONS.slice(0, 3).map((beacon, index) => <div key={beacon} style={{ position: 'absolute', top: '-12px', left: index === 0 ? '10%' : index === 1 ? '45%' : undefined, right: index === 2 ? '10%' : undefined, width: 24, height: 24, background: selectedBeacon === beacon ? '#2563eb' : '#cbd5e1', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>{index + 1}</div>)}
               
               {/* Right Side */}
-              <div style={{ position: 'absolute', top: '40%', right: '-12px', width: 24, height: 24, background: '#ef4444', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>4</div>
+              <div style={{ position: 'absolute', top: '40%', right: '-12px', width: 24, height: 24, background: selectedBeacon === BEACONS[3] ? '#2563eb' : '#cbd5e1', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>4</div>
               
               {/* Bottom Row */}
-              <div style={{ position: 'absolute', bottom: '-12px', right: '10%', width: 24, height: 24, background: '#ef4444', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>5</div>
-              <div style={{ position: 'absolute', bottom: '-12px', left: '45%', width: 24, height: 24, background: '#10b981', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>6</div>
-              <div style={{ position: 'absolute', bottom: '-12px', left: '10%', width: 24, height: 24, background: '#10b981', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>7</div>
+              <div style={{ position: 'absolute', bottom: '-12px', right: '10%', width: 24, height: 24, background: selectedBeacon === BEACONS[4] ? '#2563eb' : '#cbd5e1', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>5</div>
+              <div style={{ position: 'absolute', bottom: '-12px', left: '45%', width: 24, height: 24, background: selectedBeacon === BEACONS[5] ? '#2563eb' : '#cbd5e1', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>6</div>
+              <div style={{ position: 'absolute', bottom: '-12px', left: '10%', width: 24, height: 24, background: selectedBeacon === BEACONS[6] ? '#2563eb' : '#cbd5e1', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>7</div>
               
               {/* Left Side */}
-              <div style={{ position: 'absolute', top: '40%', left: '-12px', width: 24, height: 24, background: '#10b981', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>8</div>
+              <div style={{ position: 'absolute', top: '40%', left: '-12px', width: 24, height: 24, background: selectedBeacon === BEACONS[7] ? '#2563eb' : '#cbd5e1', borderRadius: '50%', border: '3px solid #fff', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', color: '#fff', fontSize: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700 }}>8</div>
             </div>
           </div>
           <div style={{ textAlign: 'center', marginTop: '10px', fontSize: '0.75rem', color: '#64748b' }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginRight: '12px' }}><div style={{ width: 8, height: 8, background: '#10b981', borderRadius: '50%' }}></div> Hit</span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, background: '#ef4444', borderRadius: '50%' }}></div> Missed</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginRight: '12px' }}><div style={{ width: 8, height: 8, background: '#2563eb', borderRadius: '50%' }}></div> Current beacon</span>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, background: '#cbd5e1', borderRadius: '50%' }}></div> Not currently detected</span>
           </div>
         </div>
 

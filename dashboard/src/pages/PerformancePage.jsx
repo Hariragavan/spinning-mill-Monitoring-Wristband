@@ -10,24 +10,6 @@ const HOURLY = Array.from({ length: 24 }, (_, h) => ({
   target: 92,
 }));
 
-const PER_MACHINE = [
-  { name: 'M1', efficiency: 94.2, uptime: 97.1, output: 3200, trend: [{v: 90},{v: 92},{v: 91},{v: 94},{v: 93},{v: 94.2}] },
-  { name: 'M2', efficiency: 86.8, uptime: 95.4, output: 3050, trend: [{v: 95},{v: 94},{v: 92},{v: 90},{v: 88},{v: 86.8}] },
-  { name: 'M3', efficiency: 89.5, uptime: 93.2, output: 2900, trend: [{v: 85},{v: 87},{v: 88},{v: 89},{v: 90},{v: 89.5}] },
-];
-
-const PER_WORKER = [
-  { name: 'W1: Alex', rounds: 12, avgLapTime: '6m 20s', steps: 4800, speed: '1.3 m/s' },
-  { name: 'W2: Raj',  rounds: 9,  avgLapTime: '7m 05s', steps: 3600, speed: '1.1 m/s' },
-  { name: 'W3: Maria', rounds: 7, avgLapTime: '7m 40s', steps: 2900, speed: '1.0 m/s' },
-];
-
-const TIMELINE_DATA = [
-  { name: 'Alex P.', M1: 120, M2: 80, M3: 0, Idle: 40 },
-  { name: 'Raj K.', M1: 0, M2: 150, M3: 60, Idle: 30 },
-  { name: 'Maria S.', M1: 60, M2: 0, M3: 150, Idle: 30 },
-];
-
 const Gauge = ({ value, label, color }) => {
   const data = [
     { name: 'Value', value: value },
@@ -54,6 +36,31 @@ const Gauge = ({ value, label, color }) => {
 };
 
 const PerformancePage = ({ workers }) => {
+  const workerList = Object.entries(workers).filter(([, data]) => data?.live);
+  const machineData = ['M1', 'M2', 'M3'].map(machine => {
+    const machineWorkers = workerList.filter(([, data]) => data.live.current_machine === machine);
+    const walking = machineWorkers.filter(([, data]) => data.live.motion_state === 'walking').length;
+    const efficiency = machineWorkers.length ? Math.round((walking / machineWorkers.length) * 1000) / 10 : 0;
+    const uptime = machineWorkers.length ? Math.round((machineWorkers.length / Math.max(workerList.length, 1)) * 1000) / 10 : 0;
+    const output = machineWorkers.reduce((sum, [, data]) => sum + (data.live.total_steps || 0), 0);
+    return { name: machine, efficiency, uptime, output, trend: [{ v: efficiency }, { v: efficiency }, { v: efficiency }] };
+  });
+  const totalOutput = workerList.reduce((sum, [, data]) => sum + (data.live.total_steps || 0), 0);
+  const timelineData = workerList.map(([id, data]) => {
+    const live = data.live;
+    const elapsedMinutes = Math.max(0, (live.timestamp - (live.login_timestamp || live.timestamp)) / 60000);
+    return {
+      name: `W${id.split('_')[1]}`,
+      M1: live.current_machine === 'M1' ? Math.max(0, Math.round(elapsedMinutes - (live.idle_duration_sec || 0) / 60)) : 0,
+      M2: live.current_machine === 'M2' ? Math.max(0, Math.round(elapsedMinutes - (live.idle_duration_sec || 0) / 60)) : 0,
+      M3: live.current_machine === 'M3' ? Math.max(0, Math.round(elapsedMinutes - (live.idle_duration_sec || 0) / 60)) : 0,
+      Idle: Math.round((live.idle_duration_sec || 0) / 60),
+    };
+  });
+  const overallEfficiency = machineData.filter(machine => machine.efficiency > 0).length
+    ? Math.round(machineData.reduce((sum, machine) => sum + machine.efficiency, 0) / machineData.filter(machine => machine.efficiency > 0).length)
+    : 0;
+
   return (
     <div className="page-content">
       <div className="page-header">
@@ -63,14 +70,14 @@ const PerformancePage = ({ workers }) => {
 
       {/* Live Gauges Row */}
       <div className="card" style={{ display: 'flex', justifyContent: 'space-around', alignItems: 'center', padding: '30px 20px' }}>
-        <Gauge value={94.2} label="M1 Efficiency" color="#10b981" />
+        <Gauge value={machineData[0].efficiency} label="M1 Efficiency" color="#10b981" />
         <div style={{ width: '1px', height: '60px', background: '#e2e8f0' }}></div>
-        <Gauge value={86.8} label="M2 Efficiency" color="#ef4444" />
+        <Gauge value={machineData[1].efficiency} label="M2 Efficiency" color="#ef4444" />
         <div style={{ width: '1px', height: '60px', background: '#e2e8f0' }}></div>
-        <Gauge value={89.5} label="M3 Efficiency" color="#f59e0b" />
+        <Gauge value={machineData[2].efficiency} label="M3 Efficiency" color="#f59e0b" />
         <div style={{ width: '1px', height: '60px', background: '#e2e8f0' }}></div>
         <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '2.5rem', fontWeight: 800, color: '#0f172a', lineHeight: 1 }}>9,150</div>
+          <div style={{ fontSize: '2.5rem', fontWeight: 800, color: '#0f172a', lineHeight: 1 }}>{totalOutput.toLocaleString()}</div>
           <div style={{ fontSize: '0.75rem', fontWeight: 600, color: '#64748b', marginTop: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Live Output (Units)</div>
         </div>
       </div>
@@ -82,7 +89,7 @@ const PerformancePage = ({ workers }) => {
           <table>
             <thead><tr><th>Machine</th><th>Efficiency</th><th>10m Trend</th><th>Uptime</th><th>Output</th></tr></thead>
             <tbody>
-              {PER_MACHINE.map(m => {
+              {machineData.map(m => {
                 const color = m.efficiency >= 92 ? '#10b981' : m.efficiency >= 89 ? '#f59e0b' : '#ef4444';
                 return (
                   <tr key={m.name}>
@@ -114,7 +121,7 @@ const PerformancePage = ({ workers }) => {
           <div style={{ fontSize: '0.75rem', color: '#64748b', marginBottom: '16px' }}>Where each operator spent their time today (mins)</div>
           <div style={{ width: '100%', height: 200 }}>
             <ResponsiveContainer>
-              <BarChart data={TIMELINE_DATA} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
+              <BarChart data={timelineData} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#0f172a', fontWeight: 600 }} width={70} />
@@ -134,7 +141,7 @@ const PerformancePage = ({ workers }) => {
           <div className="card-title">Overall Efficiency Trend</div>
           <div style={{ width: '100%', height: 200 }}>
             <ResponsiveContainer>
-              <AreaChart data={HOURLY} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
+              <AreaChart data={HOURLY.map(point => ({ ...point, efficiency: overallEfficiency || point.efficiency }))} margin={{ top: 5, right: 0, left: -20, bottom: 0 }}>
                 <defs>
                   <linearGradient id="perfGrad" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="#14b8a6" stopOpacity={0.2} />
