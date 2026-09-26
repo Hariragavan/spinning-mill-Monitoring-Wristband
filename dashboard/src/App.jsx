@@ -1,6 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { ref, onValue } from 'firebase/database';
-import { db } from './firebase';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { supabase } from './supabase';
 import Sidebar from './components/Sidebar/Sidebar';
 import DashboardPage from './pages/DashboardPage';
 import MachinesPage from './pages/MachinesPage';
@@ -77,6 +76,8 @@ function toLive(id, s) {
 }
 // ── End simulator ────────────────────────────────────────
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
+
 const PAGE_TITLES = {
   dashboard: 'Dashboard', machines: 'Machines', operators: 'Operators',
   performance: 'Performance', rounds: 'Rounds', breaks: 'Breaks & Downtime',
@@ -98,22 +99,122 @@ function App() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const simStates = useRef(null);
 
+  // ── Data mode: 'simulation' or 'live' ──────────────────
+  const [dataMode, setDataMode] = useState(() => {
+    return localStorage.getItem('spinningmill_data_mode') || 'simulation';
+  });
+  const [backendStatus, setBackendStatus] = useState('unknown');
+
+  const handleSetDataMode = useCallback((mode) => {
+    setDataMode(mode);
+    localStorage.setItem('spinningmill_data_mode', mode);
+    setWorkers({});
+    setLoading(true);
+  }, []);
+
   useEffect(() => { const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
 
   useEffect(() => {
-    const isMock = import.meta.env.VITE_FIREBASE_API_KEY === 'YOUR_API_KEY' || !import.meta.env.VITE_FIREBASE_API_KEY;
-    if (!isMock) {
-      const unsubscribe = onValue(ref(db, 'workers'), (snap) => { if (snap.exists()) setWorkers(snap.val()); setLoading(false); });
-      return () => unsubscribe();
+    // ── LIVE MODE: Poll backend API ──
+    if (dataMode === 'live') {
+      let cancelled = false;
+
+      const fetchWorkers = async () => {
+        try {
+          const response = await fetch(`${API_BASE_URL}/workers`);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const data = await response.json();
+          if (!cancelled) {
+            setWorkers(data);
+            setLoading(false);
+            setBackendStatus('connected');
+          }
+        } catch (error) {
+          console.error('Failed to fetch from backend:', error.message);
+          if (!cancelled) {
+            setBackendStatus('disconnected');
+            setLoading(false);
+          }
+        }
+      };
+
+      fetchWorkers();
+      const iv = setInterval(fetchWorkers, 3000);
+      return () => { cancelled = true; clearInterval(iv); };
     }
+
+    // ── SUPABASE REALTIME MODE ──
+    const isMock = !import.meta.env.VITE_SUPABASE_URL || 
+                   import.meta.env.VITE_SUPABASE_URL.includes('your-project');
+
+    if (!isMock && dataMode === 'simulation') {
+      const fetchSupabaseWorkers = async () => {
+        const { data, error } = await supabase.from('workers').select('*');
+        if (!error && data && data.length > 0) {
+          const formatted = {};
+          for (const r of data) {
+            formatted[r.worker_id] = {
+              live: {
+                current_zone: r.current_zone || 'Side A',
+                last_beacon_id: r.last_beacon_id || 'M1-A1',
+                beacon_rssi: r.beacon_rssi ?? -70,
+                current_machine: r.current_machine || 'M1',
+                lap_count: r.lap_count ?? 0,
+                lap_duration_sec: r.lap_duration_sec ?? 0,
+                transit_time_sec: 0,
+                directional_heading: r.directional_heading || 'Stationary',
+                motion_state: r.motion_state || 'stationary',
+                idle_duration_sec: r.idle_duration_sec ?? 0,
+                walking_speed_ms: (r.walking_speed_ms ?? 0).toFixed(2),
+                total_steps: 0,
+                steps_per_min_cadence: 0,
+                arm_motion_intensity: 0,
+                shift_status: r.shift_status || 'login',
+                login_timestamp: Date.now(),
+                logout_timestamp: null,
+                break_mode: 'none',
+                break_duration_sec: 0,
+                incident_type: r.incident_type || 'none',
+                incident_zone: null,
+                assistance_request_flag: r.assistance_request_flag ?? false,
+                doffing_cycle_active: false,
+                timestamp: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
+                device_id: r.device_id || 'unknown',
+                wristband_battery_pct: r.wristband_battery_pct ?? 100,
+                beacon_battery_pct: r.beacon_battery_pct ?? 100,
+                packet_latency_ms: 0
+              }
+            };
+          }
+          setWorkers(formatted);
+        }
+        setLoading(false);
+      };
+
+      fetchSupabaseWorkers();
+
+      const channel = supabase
+        .channel('public:workers')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'workers' }, () => {
+          fetchSupabaseWorkers();
+        })
+        .subscribe();
+
+      return () => {
+        supabase.removeChannel(channel);
+      };
+    }
+
+    // Default: built-in client-side simulator
     if (!simStates.current) {
       simStates.current = { worker_1: createWorkerState('M1'), worker_2: createWorkerState('M2'), worker_3: createWorkerState('M3') };
     }
     const build = () => { const o = {}; for (const [id, st] of Object.entries(simStates.current)) o[id] = { live: toLive(id, st) }; return o; };
     setWorkers(build()); setLoading(false);
+    setBackendStatus('unknown');
     const iv = setInterval(() => { for (const id of Object.keys(simStates.current)) simStates.current[id] = tickWorker(simStates.current[id]); setWorkers(build()); }, 3000);
     return () => clearInterval(iv);
-  }, []);
+  }, [dataMode]);
 
   // Alert count for sidebar badge
   const alertCount = Object.values(workers).reduce((c, d) => {
@@ -122,13 +223,13 @@ function App() {
     if (d.live.motion_state === 'stationary' && d.live.idle_duration_sec > 120) c++;
     if (d.live.wristband_battery_pct < 25) c++;
     return c;
-  }, 0) + 8; // +8 historical
+  }, 0) + (dataMode === 'simulation' ? 8 : 0);
 
   const alerts = Object.entries(workers).reduce((acc, [id, data]) => {
     if (!data.live) return acc;
     if (data.live.incident_type !== 'none')
       acc.push(`W${id.split('_')[1]}: ${data.live.incident_type.replace('_', ' ')} at ${data.live.current_machine}`);
-    else if (data.live.motion_state === 'stationary' && data.live.idle_duration_sec > 180)
+    else if (data.live.motion_state === 'stationary' && d.live.idle_duration_sec > 180)
       acc.push(`W${id.split('_')[1]} idle for ${Math.floor(data.live.idle_duration_sec / 60)}m`);
     return acc;
   }, []);
@@ -148,7 +249,7 @@ function App() {
     window.location.hash = page;
   };
 
-  if (loading) return <div className="app-layout"><div className="main-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading\u2026</div></div>;
+  if (loading) return <div className="app-layout"><div className="main-content" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading…</div></div>;
 
   const renderPage = () => {
     if (selectedWorker) return <WorkerDetail workerId={selectedWorker} workerData={workers[selectedWorker]} onBack={() => setSelectedWorker(null)} />;
@@ -161,8 +262,8 @@ function App() {
       case 'reports':     return <ReportsPage workers={workers} onOpenCorrelation={() => handleNavigate('correlation')} />;
       case 'correlation': return <CorrelationDetailPage workers={workers} onBack={() => handleNavigate('reports')} />;
       case 'alerts':      return <AlertsPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} />;
-      case 'settings':    return <SettingsPage />;
-      default:            return <DashboardPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} />;
+      case 'settings':    return <SettingsPage dataMode={dataMode} onSetDataMode={handleSetDataMode} backendStatus={backendStatus} />;
+      default:            return <DashboardPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} dataMode={dataMode} />;
     }
   };
 
@@ -170,12 +271,11 @@ function App() {
     <div className="app-layout">
       <Sidebar activePage={activePage} onNavigate={handleNavigate} alertCount={alertCount} />
       <main className="main-content">
-        {/* Header */}
         <div className="app-header">
           <div>
             <h1>{selectedWorker ? 'Worker Detail' : (activePage === 'dashboard' ? 'Welcome, Supervisor' : PAGE_TITLES[activePage])}</h1>
             <div className="header-subtitle">
-              {activePage === 'dashboard' && !selectedWorker ? 'Spinning Mill \u2014 Patrol Monitoring Command Center' : ''}
+              {activePage === 'dashboard' && !selectedWorker ? 'Spinning Mill — Patrol Monitoring Command Center' : ''}
             </div>
           </div>
           <div className="header-right">
@@ -188,14 +288,16 @@ function App() {
                 {alerts.length} active
               </div>
             )}
-            <div className="live-indicator"><span className="live-dot" />LIVE</div>
+            <div className={`live-indicator ${dataMode === 'live' ? 'live-mode-active' : ''}`}>
+              <span className={`live-dot ${dataMode === 'live' ? 'live-dot-green' : ''}`} />
+              {dataMode === 'live' ? 'LIVE' : 'SIM'}
+            </div>
             <div className="timestamp-badge">
               {currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </div>
           </div>
         </div>
 
-        {/* Page content */}
         {renderPage()}
       </main>
     </div>

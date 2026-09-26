@@ -6,13 +6,13 @@ dotenv.config();
 
 // Your web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: process.env.FIREBASE_API_KEY || "YOUR_API_KEY",
-  authDomain: process.env.FIREBASE_AUTH_DOMAIN || "YOUR_PROJECT_ID.firebaseapp.com",
+  apiKey: process.env.FIREBASE_API_KEY || "YAIzaSyDes4oMD7n4cr2P2pQqsg0nFmtoekKrnwY",
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN || "spinning-mill-ee480.firebaseapp.com",
   databaseURL: process.env.FIREBASE_DATABASE_URL || "https://YOUR_PROJECT_ID.firebaseio.com",
-  projectId: process.env.FIREBASE_PROJECT_ID || "YOUR_PROJECT_ID",
-  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "YOUR_SENDER_ID",
-  appId: process.env.FIREBASE_APP_ID || "YOUR_APP_ID"
+  projectId: process.env.FIREBASE_PROJECT_ID || "spinning-mill-ee480",
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET || "spinning-mill-ee480.firebasestorage.app",
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "1015705330407",
+  appId: process.env.FIREBASE_APP_ID || "1:1015705330407:web:944da6c18172a7ac117842"
 };
 
 // Initialize Firebase

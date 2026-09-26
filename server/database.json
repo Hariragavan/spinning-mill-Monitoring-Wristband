@@ -1,0 +1,30 @@
+[
+  {
+    "_id": "local_ky02z2u2n",
+    "device_id": "ESP32C3-WRIST-01",
+    "system_id": "0xCAFE",
+    "location": {
+      "beacon_id": 2,
+      "zone_name": "Station 2 (Midpoint)",
+      "rssi_dbm": -61
+    },
+    "patrol": {
+      "state": "RETURNING",
+      "lap_count": 1,
+      "current_lap_sec": 18.45,
+      "completed_lap_sec": 0
+    },
+    "motion": {
+      "motion_state": "walking",
+      "speed_estimate_ms": 1.08,
+      "idle_sec": 0
+    },
+    "safety": {
+      "assistance_requested": false
+    },
+    "telemetry": {
+      "uptime_ms": 78240
+    },
+    "received_at": "2026-08-28T06:22:22.319Z"
+  }
+]

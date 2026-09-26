@@ -4,17 +4,29 @@ import KPIGrid from '../components/KPIGrid';
 import EfficiencyChart from '../components/EfficiencyChart';
 import KeyInsights from '../components/KeyInsights';
 import ModeDurationAnalytics from '../components/ModeDurationAnalytics';
+import LiveStatusPanel from '../components/LiveStatusPanel';
 
-const DashboardPage = ({ workers, onWorkerClick }) => {
+const DashboardPage = ({ workers, onWorkerClick, dataMode }) => {
+  const isLive = dataMode === 'live';
+
   return (
     <>
-      <ZoneMap workers={workers} onWorkerClick={onWorkerClick} />
-      <KPIGrid workers={workers} />
-      <div className="bottom-split">
-        <EfficiencyChart />
-        <KeyInsights />
-      </div>
-      <ModeDurationAnalytics />
+      {/* Live mode: show a device status panel above the map */}
+      {isLive && <LiveStatusPanel workers={workers} />}
+
+      <ZoneMap workers={workers} onWorkerClick={onWorkerClick} dataMode={dataMode} />
+      <KPIGrid workers={workers} dataMode={dataMode} />
+
+      {/* In live mode, analytics panels are hidden since there is no historical data yet */}
+      {!isLive && (
+        <>
+          <div className="bottom-split">
+            <EfficiencyChart />
+            <KeyInsights />
+          </div>
+          <ModeDurationAnalytics />
+        </>
+      )}
     </>
   );
 };

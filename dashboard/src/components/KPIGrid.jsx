@@ -1,83 +1,160 @@
 import React from 'react';
 
-const KPIGrid = ({ workers }) => {
-  // Derive KPIs from live worker data
+const KPIGrid = ({ workers, dataMode }) => {
+  const isLive = dataMode === 'live';
   const workerList = Object.values(workers).filter(w => w?.live);
-  const totalWorkersCount = Object.keys(workers).length || 3;
-  const activeWorkersCount = workerList.filter(w => w.live.shift_status !== 'logout').length || 3;
-  
-  const activeMachinesCount = new Set(workerList.map(w => w.live.current_machine).filter(Boolean)).size || 3;
-  const totalBeaconsCount = activeMachinesCount * 8;
-  
-  const totalRounds = workerList.reduce((s, w) => s + (w.live.lap_count || 0), 0) + 38;
-  
-  const totalBreakSeconds = workerList.reduce((s, w) => s + (w.live.break_duration_sec || 0), 0);
-  const totalBreakMins = Math.floor(totalBreakSeconds / 60) + 14;
-  
-  const walkingCount = workerList.filter(w => w.live.motion_state === 'walking').length;
-  const avgEfficiency = workerList.length > 0 
-    ? (89.5 + (walkingCount / workerList.length) * 5.5).toFixed(1)
-    : '93.8';
-    
-  const avgRpm = 18450 + (totalRounds % 10) * 35;
 
-  const kpis = [
+  // ── Real counts derived from actual data ──────────────────
+  const totalWorkersCount = workerList.length;
+  const activeWorkersCount = workerList.filter(w => w.live.shift_status !== 'logout').length;
+
+  const activeMachines = new Set(workerList.map(w => w.live.current_machine).filter(Boolean));
+  const activeMachinesCount = activeMachines.size;
+
+  // Detected unique beacons from actual data in live mode
+  const activeBeacons = new Set(workerList.map(w => w.live.last_beacon_id).filter(Boolean));
+  const totalBeaconsCount = isLive ? activeBeacons.size : activeMachinesCount * 8;
+
+  const totalRounds = workerList.reduce((s, w) => s + (w.live.lap_count || 0), 0);
+  // Add historic offset only in sim mode to look realistic
+  const displayRounds = isLive ? totalRounds : totalRounds + 38;
+
+  const totalBreakSeconds = workerList.reduce((s, w) => s + (w.live.break_duration_sec || 0), 0);
+  const totalBreakMins = Math.floor(totalBreakSeconds / 60);
+  const displayBreakMins = isLive ? totalBreakMins : totalBreakMins + 14;
+
+  const walkingCount = workerList.filter(w => w.live.motion_state === 'walking').length;
+  const avgWalkingSpeed = workerList.length > 0
+    ? (workerList.reduce((s, w) => s + parseFloat(w.live.walking_speed_ms || 0), 0) / workerList.length).toFixed(2)
+    : '0.00';
+
+  const avgEfficiency = workerList.length > 0
+    ? (89.5 + (walkingCount / Math.max(workerList.length, 1)) * 5.5).toFixed(1)
+    : isLive ? '—' : '93.8';
+
+  const avgRpm = isLive ? '—' : (18450 + (displayRounds % 10) * 35).toLocaleString() + ' RPM';
+
+  // ── Build KPI cards ───────────────────────────────────────
+  const kpis = isLive ? [
+    // Live mode: only show real data
+    {
+      label: 'Active Devices',
+      value: totalWorkersCount > 0 ? `${activeWorkersCount} / ${totalWorkersCount} Online` : 'No devices',
+      status: totalWorkersCount > 0 ? `${activeMachinesCount} machine${activeMachinesCount !== 1 ? 's' : ''} active` : 'Waiting for device data',
+      color: '#2563eb', bgColor: '#eff6ff', borderColor: '#bfdbfe',
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+        </svg>
+      ),
+    },
+    {
+      label: 'Detected Beacons',
+      value: activeBeacons.size > 0 ? `${activeBeacons.size} Beacon${activeBeacons.size !== 1 ? 's' : ''}` : 'None detected',
+      status: activeBeacons.size > 0 ? [...activeBeacons].join(', ') : 'No BLE beacons in range',
+      color: '#0d9488', bgColor: '#f0fdfa', borderColor: '#ccfbf1',
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5.5 11a6.5 6.5 0 0 1 13 0"/><path d="M2 11a10 10 0 0 1 20 0"/>
+          <circle cx="12" cy="17" r="1"/><line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+      ),
+    },
+    {
+      label: 'Patrol Rounds',
+      value: `${displayRounds} Laps`,
+      status: activeWorkersCount > 0 ? 'From device data' : 'No data yet',
+      color: '#7c3aed', bgColor: '#f5f3ff', borderColor: '#ddd6fe',
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M21.5 2v6h-6"/><path d="M21.34 15.57a10 10 0 1 1-.57-8.38l4.73-4.73"/>
+        </svg>
+      ),
+    },
+    {
+      label: 'Motion State',
+      value: walkingCount > 0 ? `${walkingCount} Walking` : 'Stationary',
+      status: `Avg speed: ${avgWalkingSpeed} m/s`,
+      color: walkingCount > 0 ? '#059669' : '#d97706',
+      bgColor: walkingCount > 0 ? '#ecfdf5' : '#fffbeb',
+      borderColor: walkingCount > 0 ? '#a7f3d0' : '#fde68a',
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M13 4a1 1 0 1 0 2 0 1 1 0 0 0-2 0"/><path d="M5 20l4-4 2 3 4-6 4 7"/><path d="M8 12l2-4 3 2"/>
+        </svg>
+      ),
+    },
+    {
+      label: 'Heading',
+      value: workerList.length > 0 ? (workerList[0].live.directional_heading || '—') : '—',
+      status: workerList.length > 0 ? `Patrol state: ${workerList[0].live.directional_heading || 'unknown'}` : 'No data',
+      color: '#0284c7', bgColor: '#f0f9ff', borderColor: '#bae6fd',
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/>
+        </svg>
+      ),
+    },
+    {
+      label: 'Assistance',
+      value: workerList.some(w => w.live.assistance_request_flag) ? '🆘 HELP NEEDED' : '✓ All Clear',
+      status: workerList.some(w => w.live.assistance_request_flag) ? 'Worker pressed help button' : 'No assistance required',
+      color: workerList.some(w => w.live.assistance_request_flag) ? '#dc2626' : '#059669',
+      bgColor: workerList.some(w => w.live.assistance_request_flag) ? '#fef2f2' : '#ecfdf5',
+      borderColor: workerList.some(w => w.live.assistance_request_flag) ? '#fecaca' : '#a7f3d0',
+      icon: (
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      ),
+    },
+  ] : [
+    // Simulation mode: original 6 cards with simulated offsets
     {
       label: 'Machines & Beacons',
       value: `${activeMachinesCount} Mchns • ${totalBeaconsCount} Beac.`,
       status: '100% Online',
-      color: '#0d9488',
-      bgColor: '#f0fdfa',
-      borderColor: '#ccfbf1',
+      color: '#0d9488', bgColor: '#f0fdfa', borderColor: '#ccfbf1',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="2" y="6" width="20" height="12" rx="3"/>
-          <circle cx="7" cy="12" r="2"/>
+          <rect x="2" y="6" width="20" height="12" rx="3"/><circle cx="7" cy="12" r="2"/>
           <path d="M12 9v6"/><path d="M16 10a2 2 0 0 1 0 4"/>
         </svg>
       ),
     },
     {
       label: 'Active Workers',
-      value: `${activeWorkersCount} / ${totalWorkersCount} Operators`,
+      value: `${activeWorkersCount || 3} / ${totalWorkersCount || 3} Operators`,
       status: 'All Active On Floor',
-      color: '#2563eb',
-      bgColor: '#eff6ff',
-      borderColor: '#bfdbfe',
+      color: '#2563eb', bgColor: '#eff6ff', borderColor: '#bfdbfe',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
-          <circle cx="9" cy="7" r="4"/>
-          <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
-          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
         </svg>
       ),
     },
     {
       label: 'Rounds Completed',
-      value: `${totalRounds} Laps`,
+      value: `${displayRounds} Laps`,
       status: '+4 Laps / hr',
-      color: '#7c3aed',
-      bgColor: '#f5f3ff',
-      borderColor: '#ddd6fe',
+      color: '#7c3aed', bgColor: '#f5f3ff', borderColor: '#ddd6fe',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21.5 2v6h-6"/>
-          <path d="M21.34 15.57a10 10 0 1 1-.57-8.38l4.73-4.73"/>
+          <path d="M21.5 2v6h-6"/><path d="M21.34 15.57a10 10 0 1 1-.57-8.38l4.73-4.73"/>
         </svg>
       ),
     },
     {
       label: 'Break Time',
-      value: `${totalBreakMins} mins`,
+      value: `${displayBreakMins} mins`,
       status: 'Target OK',
-      color: '#d97706',
-      bgColor: '#fffbeb',
-      borderColor: '#fde68a',
+      color: '#d97706', bgColor: '#fffbeb', borderColor: '#fde68a',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10"/>
-          <polyline points="12 6 12 12 16 14"/>
+          <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
         </svg>
       ),
     },
@@ -85,9 +162,7 @@ const KPIGrid = ({ workers }) => {
       label: 'Avg Efficiency',
       value: `${avgEfficiency}%`,
       status: '↑ +1.8% Yield',
-      color: '#059669',
-      bgColor: '#ecfdf5',
-      borderColor: '#a7f3d0',
+      color: '#059669', bgColor: '#ecfdf5', borderColor: '#a7f3d0',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
@@ -96,15 +171,12 @@ const KPIGrid = ({ workers }) => {
     },
     {
       label: 'Avg RPM',
-      value: `${avgRpm.toLocaleString()} RPM`,
+      value: avgRpm,
       status: 'Optimal Speed',
-      color: '#0284c7',
-      bgColor: '#f0f9ff',
-      borderColor: '#bae6fd',
+      color: '#0284c7', bgColor: '#f0f9ff', borderColor: '#bae6fd',
       icon: (
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="9"/>
-          <path d="M12 12l4-4"/>
+          <circle cx="12" cy="12" r="9"/><path d="M12 12l4-4"/>
           <path d="M12 7v1"/><path d="M12 16v1"/>
         </svg>
       ),
@@ -114,13 +186,10 @@ const KPIGrid = ({ workers }) => {
   return (
     <div className="kpi-grid">
       {kpis.map((kpi, i) => (
-        <div 
-          key={i} 
+        <div
+          key={i}
           className="colorful-clean-card"
-          style={{
-            background: kpi.bgColor,
-            borderColor: kpi.borderColor,
-          }}
+          style={{ background: kpi.bgColor, borderColor: kpi.borderColor }}
         >
           <div className="colorful-card-header">
             <div className="colorful-card-icon" style={{ color: kpi.color, background: 'rgba(255, 255, 255, 0.85)' }}>
@@ -128,12 +197,8 @@ const KPIGrid = ({ workers }) => {
             </div>
             <span className="colorful-card-label">{kpi.label}</span>
           </div>
-
           <div className="colorful-card-value">{kpi.value}</div>
-
-          <div className="colorful-card-status" style={{ color: kpi.color }}>
-            {kpi.status}
-          </div>
+          <div className="colorful-card-status" style={{ color: kpi.color }}>{kpi.status}</div>
         </div>
       ))}
     </div>
