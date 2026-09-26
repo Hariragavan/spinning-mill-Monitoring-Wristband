@@ -1,9 +1,12 @@
 import express from 'express';
-import { isLocalFileDbEnabled, saveLocalRecord, getLatestLocalRecords } from '../index.js';
+import { isLocalFileDbEnabled, saveLocalRecord, getLatestLocalRecords } from '../dbLocal.js';
 
 const router = express.Router();
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://your-project.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_KEY || 'your-anon-key-here';
+
+const getSupabaseConfig = () => ({
+  url: process.env.SUPABASE_URL || 'https://vldhjpvyphzxofmwqmys.supabase.co',
+  key: process.env.SUPABASE_KEY || 'sb_publishable_UxA-HekCjNWcPPBTmlbyJg_RVErZCmK'
+});
 
 const DEVICE_WORKER_MAP = {
   'ESP32C3-WRIST-01': { worker_id: 'worker_1', name: 'Worker 1' },
@@ -59,11 +62,11 @@ function mapDeviceToLive(raw) {
 
 // ──────────────────────────────────────────────────────────
 // POST /api/device-data
-// ESP32 gateway sends device telemetry here.
 // ──────────────────────────────────────────────────────────
 router.post('/device-data', async (req, res) => {
   try {
     const payload = req.body;
+    const { url, key } = getSupabaseConfig();
 
     if (!payload.device_id) {
       return res.status(400).json({ error: 'Missing device_id in payload' });
@@ -76,12 +79,12 @@ router.post('/device-data', async (req, res) => {
       recordId = record._id;
     } else {
       // 1. Insert into Supabase table public.telemetry_logs
-      const logRes = await fetch(`${SUPABASE_URL}/rest/v1/telemetry_logs`, {
+      const logRes = await fetch(`${url}/rest/v1/telemetry_logs`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'apikey': key,
+          'Authorization': `Bearer ${key}`,
           'Prefer': 'return=representation'
         },
         body: JSON.stringify({
@@ -104,12 +107,12 @@ router.post('/device-data', async (req, res) => {
       const workerInfo = DEVICE_WORKER_MAP[payload.device_id] || { worker_id: 'worker_1' };
       const liveData = mapDeviceToLive(payload);
 
-      await fetch(`${SUPABASE_URL}/rest/v1/workers?on_conflict=worker_id`, {
+      await fetch(`${url}/rest/v1/workers?on_conflict=worker_id`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'apikey': SUPABASE_KEY,
-          'Authorization': `Bearer ${SUPABASE_KEY}`,
+          'apikey': key,
+          'Authorization': `Bearer ${key}`,
           'Prefer': 'resolution=merge-duplicates'
         },
         body: JSON.stringify({
@@ -144,10 +147,10 @@ router.post('/device-data', async (req, res) => {
 
 // ──────────────────────────────────────────────────────────
 // GET /api/workers
-// Dashboard polls this endpoint for latest worker states.
 // ──────────────────────────────────────────────────────────
 router.get('/workers', async (req, res) => {
   try {
+    const { url, key } = getSupabaseConfig();
     const deviceIds = Object.keys(DEVICE_WORKER_MAP);
 
     if (isLocalFileDbEnabled()) {
@@ -164,10 +167,10 @@ router.get('/workers', async (req, res) => {
     }
 
     // Fetch directly from Supabase table public.workers
-    const sbRes = await fetch(`${SUPABASE_URL}/rest/v1/workers?select=*`, {
+    const sbRes = await fetch(`${url}/rest/v1/workers?select=*`, {
       headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': `Bearer ${SUPABASE_KEY}`
+        'apikey': key,
+        'Authorization': `Bearer ${key}`
       }
     });
 

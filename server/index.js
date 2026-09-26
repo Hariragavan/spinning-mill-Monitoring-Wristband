@@ -1,6 +1,6 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -9,12 +9,10 @@ import deviceRoutes from './routes/deviceRoutes.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-dotenv.config();
-
 const app = express();
 const PORT = process.env.PORT || 3001;
-const SUPABASE_URL = process.env.SUPABASE_URL || 'https://your-project.supabase.co';
-const SUPABASE_KEY = process.env.SUPABASE_KEY || 'your-anon-key-here';
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://vldhjpvyphzxofmwqmys.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_KEY || 'sb_publishable_UxA-HekCjNWcPPBTmlbyJg_RVErZCmK';
 
 // ── Middleware ────────────────────────────────────────────
 app.use(cors());
@@ -94,7 +92,7 @@ async function start() {
     if (res.ok) {
       console.log(`✓ Connected to Supabase Database (${SUPABASE_URL})`);
     } else {
-      console.log(`⚠️ Supabase status: HTTP ${res.status}. Set SUPABASE_URL and SUPABASE_KEY in server/.env`);
+      console.log(`⚠️ Supabase status: HTTP ${res.status}. Check credentials.`);
     }
   } catch (error) {
     console.log(`⚠️ Supabase connection warning (${error.message}). Using local fallback mode if unconfigured.`);

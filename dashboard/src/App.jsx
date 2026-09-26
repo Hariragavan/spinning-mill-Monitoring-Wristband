@@ -13,68 +13,38 @@ import AlertsPage from './pages/AlertsPage';
 import SettingsPage from './pages/SettingsPage';
 import WorkerDetail from './components/WorkerDetail';
 
-// ── Built-in live simulator ──────────────────────────────
-const BEACONS = ['A1', 'A2', 'A3', 'A4', 'B4', 'B3', 'B2', 'B1'];
-const MACHINES = ['M1', 'M2', 'M3'];
-const rand = (a, b) => Math.random() * (b - a) + a;
-const randInt = (a, b) => Math.floor(rand(a, b));
-
-function createWorkerState(machine) {
+function formatSupabaseWorker(r) {
   return {
-    current_machine: machine, beacon_index: 0, lap_count: 0,
-    lap_start_time: Date.now(), total_steps: 0,
-    login_timestamp: Date.now() - randInt(3600000, 7200000),
-    motion_state: 'walking', idle_duration_sec: 0, idle_ticks_remaining: 0,
-    incident_type: 'none', incident_ticks_remaining: 0,
-    wristband_battery_pct: 100, doffing_cycle_active: false,
+    current_zone: r.current_zone || 'Side A',
+    last_beacon_id: r.last_beacon_id || 'M1-A1',
+    beacon_rssi: r.beacon_rssi ?? -70,
+    current_machine: r.current_machine || 'M1',
+    lap_count: r.lap_count ?? 0,
+    lap_duration_sec: Number(r.lap_duration_sec ?? 0),
+    transit_time_sec: 0,
+    directional_heading: r.directional_heading || 'Stationary',
+    motion_state: r.motion_state || 'stationary',
+    idle_duration_sec: r.idle_duration_sec ?? 0,
+    walking_speed_ms: (Number(r.walking_speed_ms ?? 0)).toFixed(2),
+    total_steps: 0,
+    steps_per_min_cadence: 0,
+    arm_motion_intensity: 0,
+    shift_status: r.shift_status || 'login',
+    login_timestamp: Date.now(),
+    logout_timestamp: null,
+    break_mode: 'none',
+    break_duration_sec: 0,
+    incident_type: r.incident_type || 'none',
+    incident_zone: null,
+    assistance_request_flag: r.assistance_request_flag ?? false,
+    doffing_cycle_active: false,
+    timestamp: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
+    device_id: r.device_id || 'WRISTBAND_01',
+    wristband_battery_pct: r.wristband_battery_pct ?? 100,
+    beacon_battery_pct: r.beacon_battery_pct ?? 100,
+    packet_latency_ms: 0
   };
 }
-
-function tickWorker(s) {
-  s = { ...s };
-  if (Math.random() < 0.08) s.wristband_battery_pct = Math.max(5, s.wristband_battery_pct - 1);
-  if (s.idle_ticks_remaining > 0) {
-    s.idle_ticks_remaining--; s.idle_duration_sec += 3; s.motion_state = 'stationary';
-    if (!s.idle_ticks_remaining) { s.motion_state = 'walking'; s.idle_duration_sec = 0; }
-    return s;
-  }
-  if (s.incident_ticks_remaining > 0) {
-    s.incident_ticks_remaining--; s.motion_state = 'stationary';
-    if (!s.incident_ticks_remaining) { s.incident_type = 'none'; s.motion_state = 'walking'; }
-    return s;
-  }
-  if (Math.random() < 0.05) { s.idle_ticks_remaining = randInt(2, 6); s.motion_state = 'stationary'; s.idle_duration_sec = 3; return s; }
-  if (Math.random() < 0.02) { s.incident_type = Math.random() < 0.5 ? 'yarn_break' : 'spindle_jam'; s.incident_ticks_remaining = randInt(3, 8); s.motion_state = 'stationary'; return s; }
-  s.motion_state = 'walking'; s.idle_duration_sec = 0; s.beacon_index++; s.total_steps += randInt(8, 18);
-  if (s.beacon_index >= BEACONS.length) {
-    s.beacon_index = 0; s.lap_count++; s.lap_start_time = Date.now();
-    if (Math.random() < 0.1) s.current_machine = MACHINES[randInt(0, MACHINES.length)];
-  }
-  return s;
-}
-
-function toLive(id, s) {
-  const b = BEACONS[s.beacon_index]; const cb = `${s.current_machine}-${b}`; const now = Date.now();
-  return {
-    current_zone: b.startsWith('A') ? 'Side A' : 'Side B', last_beacon_id: cb,
-    beacon_rssi: randInt(-75, -40), current_machine: s.current_machine, lap_count: s.lap_count,
-    lap_duration_sec: Math.floor((now - s.lap_start_time) / 1000), transit_time_sec: randInt(3, 8),
-    directional_heading: s.beacon_index < 4 ? 'Forward' : 'Return',
-    total_steps: s.total_steps, steps_per_min_cadence: s.motion_state === 'walking' ? randInt(90, 120) : 0,
-    walking_speed_ms: s.motion_state === 'walking' ? rand(1.0, 1.5).toFixed(2) : '0.00',
-    motion_state: s.motion_state, idle_duration_sec: s.idle_duration_sec,
-    arm_motion_intensity: s.motion_state === 'walking' ? randInt(40, 80) : randInt(0, 10),
-    shift_status: 'login', login_timestamp: s.login_timestamp, logout_timestamp: null,
-    break_mode: s.idle_duration_sec > 30 ? 'restroom' : 'none',
-    break_duration_sec: s.idle_duration_sec > 30 ? s.idle_duration_sec : 0,
-    incident_type: s.incident_type, incident_zone: s.incident_type !== 'none' ? cb : null,
-    assistance_request_flag: s.incident_type !== 'none' && Math.random() < 0.3,
-    doffing_cycle_active: s.doffing_cycle_active, timestamp: now,
-    device_id: `ESP32-C3-${id.split('_')[1]}`, wristband_battery_pct: s.wristband_battery_pct,
-    beacon_battery_pct: randInt(80, 100), packet_latency_ms: randInt(20, 150),
-  };
-}
-// ── End simulator ────────────────────────────────────────
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
 
@@ -97,123 +67,97 @@ function App() {
   const [selectedWorker, setSelectedWorker] = useState(null);
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const simStates = useRef(null);
 
-  // ── Data mode: 'simulation' or 'live' ──────────────────
   const [dataMode, setDataMode] = useState(() => {
-    return localStorage.getItem('spinningmill_data_mode') || 'simulation';
+    return localStorage.getItem('spinningmill_data_mode') || 'live';
   });
-  const [backendStatus, setBackendStatus] = useState('unknown');
+  const [backendStatus, setBackendStatus] = useState('connected');
 
   const handleSetDataMode = useCallback((mode) => {
     setDataMode(mode);
     localStorage.setItem('spinningmill_data_mode', mode);
-    setWorkers({});
-    setLoading(true);
   }, []);
 
   useEffect(() => { const t = setInterval(() => setCurrentTime(new Date()), 1000); return () => clearInterval(t); }, []);
 
   useEffect(() => {
-    // ── LIVE MODE: Poll backend API ──
-    if (dataMode === 'live') {
-      let cancelled = false;
+    let cancelled = false;
 
-      const fetchWorkers = async () => {
-        try {
-          const response = await fetch(`${API_BASE_URL}/workers`);
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    // 1. Fetch live workers directly from Supabase
+    const fetchSupabaseWorkers = async () => {
+      try {
+        const { data, error } = await supabase.from('workers').select('*');
+        if (!error && data && data.length > 0 && !cancelled) {
+          const formatted = {};
+          for (const r of data) {
+            formatted[r.worker_id] = { live: formatSupabaseWorker(r) };
+          }
+          setWorkers(formatted);
+          setLoading(false);
+          setBackendStatus('connected');
+          return true;
+        }
+      } catch (err) {
+        console.error('Supabase fetch error:', err);
+      }
+      return false;
+    };
+
+    // 2. Fallback fetch from Express Backend
+    const fetchBackendWorkers = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/workers`);
+        if (response.ok) {
           const data = await response.json();
-          if (!cancelled) {
+          if (!cancelled && data && Object.keys(data).length > 0) {
             setWorkers(data);
             setLoading(false);
             setBackendStatus('connected');
-          }
-        } catch (error) {
-          console.error('Failed to fetch from backend:', error.message);
-          if (!cancelled) {
-            setBackendStatus('disconnected');
-            setLoading(false);
+            return true;
           }
         }
-      };
+      } catch (err) {
+        // Backend offline
+      }
+      return false;
+    };
 
-      fetchWorkers();
-      const iv = setInterval(fetchWorkers, 3000);
-      return () => { cancelled = true; clearInterval(iv); };
-    }
+    // Initial Load
+    const initData = async () => {
+      const fromSupabase = await fetchSupabaseWorkers();
+      if (!fromSupabase) {
+        await fetchBackendWorkers();
+      }
+      if (!cancelled) setLoading(false);
+    };
 
-    // ── SUPABASE REALTIME MODE ──
-    const isMock = !import.meta.env.VITE_SUPABASE_URL || 
-                   import.meta.env.VITE_SUPABASE_URL.includes('your-project');
+    initData();
 
-    if (!isMock && dataMode === 'simulation') {
-      const fetchSupabaseWorkers = async () => {
-        const { data, error } = await supabase.from('workers').select('*');
-        if (!error && data && data.length > 0) {
-          const formatted = {};
-          for (const r of data) {
-            formatted[r.worker_id] = {
-              live: {
-                current_zone: r.current_zone || 'Side A',
-                last_beacon_id: r.last_beacon_id || 'M1-A1',
-                beacon_rssi: r.beacon_rssi ?? -70,
-                current_machine: r.current_machine || 'M1',
-                lap_count: r.lap_count ?? 0,
-                lap_duration_sec: r.lap_duration_sec ?? 0,
-                transit_time_sec: 0,
-                directional_heading: r.directional_heading || 'Stationary',
-                motion_state: r.motion_state || 'stationary',
-                idle_duration_sec: r.idle_duration_sec ?? 0,
-                walking_speed_ms: (r.walking_speed_ms ?? 0).toFixed(2),
-                total_steps: 0,
-                steps_per_min_cadence: 0,
-                arm_motion_intensity: 0,
-                shift_status: r.shift_status || 'login',
-                login_timestamp: Date.now(),
-                logout_timestamp: null,
-                break_mode: 'none',
-                break_duration_sec: 0,
-                incident_type: r.incident_type || 'none',
-                incident_zone: null,
-                assistance_request_flag: r.assistance_request_flag ?? false,
-                doffing_cycle_active: false,
-                timestamp: r.updated_at ? new Date(r.updated_at).getTime() : Date.now(),
-                device_id: r.device_id || 'unknown',
-                wristband_battery_pct: r.wristband_battery_pct ?? 100,
-                beacon_battery_pct: r.beacon_battery_pct ?? 100,
-                packet_latency_ms: 0
-              }
-            };
-          }
-          setWorkers(formatted);
+    // 3. Supabase Realtime Subscription (Instant live push on any ESP32 swipe/checkpoint!)
+    const channel = supabase
+      .channel('public:workers')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'workers' }, (payload) => {
+        console.log('[Supabase Realtime Update]', payload);
+        fetchSupabaseWorkers();
+      })
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          console.log('✓ Supabase Realtime subscribed');
+          setBackendStatus('connected');
         }
-        setLoading(false);
-      };
+      });
 
-      fetchSupabaseWorkers();
+    // 4. Polling fallback every 3 seconds
+    const pollInterval = setInterval(async () => {
+      if (cancelled) return;
+      await fetchSupabaseWorkers();
+    }, 3000);
 
-      const channel = supabase
-        .channel('public:workers')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'workers' }, () => {
-          fetchSupabaseWorkers();
-        })
-        .subscribe();
-
-      return () => {
-        supabase.removeChannel(channel);
-      };
-    }
-
-    // Default: built-in client-side simulator
-    if (!simStates.current) {
-      simStates.current = { worker_1: createWorkerState('M1'), worker_2: createWorkerState('M2'), worker_3: createWorkerState('M3') };
-    }
-    const build = () => { const o = {}; for (const [id, st] of Object.entries(simStates.current)) o[id] = { live: toLive(id, st) }; return o; };
-    setWorkers(build()); setLoading(false);
-    setBackendStatus('unknown');
-    const iv = setInterval(() => { for (const id of Object.keys(simStates.current)) simStates.current[id] = tickWorker(simStates.current[id]); setWorkers(build()); }, 3000);
-    return () => clearInterval(iv);
+    return () => {
+      cancelled = true;
+      clearInterval(pollInterval);
+      supabase.removeChannel(channel);
+    };
   }, [dataMode]);
 
   // Alert count for sidebar badge
@@ -223,13 +167,13 @@ function App() {
     if (d.live.motion_state === 'stationary' && d.live.idle_duration_sec > 120) c++;
     if (d.live.wristband_battery_pct < 25) c++;
     return c;
-  }, 0) + (dataMode === 'simulation' ? 8 : 0);
+  }, 0);
 
   const alerts = Object.entries(workers).reduce((acc, [id, data]) => {
     if (!data.live) return acc;
     if (data.live.incident_type !== 'none')
       acc.push(`W${id.split('_')[1]}: ${data.live.incident_type.replace('_', ' ')} at ${data.live.current_machine}`);
-    else if (data.live.motion_state === 'stationary' && d.live.idle_duration_sec > 180)
+    else if (data.live.motion_state === 'stationary' && data.live.idle_duration_sec > 180)
       acc.push(`W${id.split('_')[1]} idle for ${Math.floor(data.live.idle_duration_sec / 60)}m`);
     return acc;
   }, []);
