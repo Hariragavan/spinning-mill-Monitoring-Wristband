@@ -63,6 +63,7 @@ function getPageFromHash() {
 
 function App() {
   const [workers, setWorkers] = useState({});
+  const [beacons, setBeacons] = useState([]);
   const [activePage, setActivePage] = useState(getPageFromHash);
   const [selectedWorker, setSelectedWorker] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -103,6 +104,18 @@ function App() {
       return false;
     };
 
+    // 1b. Fetch registered beacons directly from Supabase
+    const fetchSupabaseBeacons = async () => {
+      try {
+        const { data, error } = await supabase.from('beacons').select('*');
+        if (!error && data && !cancelled) {
+          setBeacons(data);
+        }
+      } catch (err) {
+        // Table might not be created yet, fallback gracefully
+      }
+    };
+
     // 2. Fallback fetch from Express Backend
     const fetchBackendWorkers = async () => {
       try {
@@ -125,6 +138,7 @@ function App() {
     // Initial Load
     const initData = async () => {
       const fromSupabase = await fetchSupabaseWorkers();
+      await fetchSupabaseBeacons();
       if (!fromSupabase) {
         await fetchBackendWorkers();
       }
@@ -133,30 +147,41 @@ function App() {
 
     initData();
 
-    // 3. Supabase Realtime Subscription (Instant live push on any ESP32 swipe/checkpoint!)
-    const channel = supabase
+    // 3. Supabase Realtime Subscription for Workers
+    const workerChannel = supabase
       .channel('public:workers')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workers' }, (payload) => {
-        console.log('[Supabase Realtime Update]', payload);
+        console.log('[Supabase Realtime Update: Workers]', payload);
         fetchSupabaseWorkers();
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('✓ Supabase Realtime subscribed');
+          console.log('✓ Supabase Realtime Workers subscribed');
           setBackendStatus('connected');
         }
       });
+
+    // 3b. Supabase Realtime Subscription for Beacons
+    const beaconChannel = supabase
+      .channel('public:beacons')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'beacons' }, (payload) => {
+        console.log('[Supabase Realtime Update: Beacons]', payload);
+        fetchSupabaseBeacons();
+      })
+      .subscribe();
 
     // 4. Polling fallback every 3 seconds
     const pollInterval = setInterval(async () => {
       if (cancelled) return;
       await fetchSupabaseWorkers();
+      await fetchSupabaseBeacons();
     }, 3000);
 
     return () => {
       cancelled = true;
       clearInterval(pollInterval);
-      supabase.removeChannel(channel);
+      supabase.removeChannel(workerChannel);
+      supabase.removeChannel(beaconChannel);
     };
   }, [dataMode]);
 
@@ -207,7 +232,7 @@ function App() {
       case 'correlation': return <CorrelationDetailPage workers={workers} onBack={() => handleNavigate('reports')} />;
       case 'alerts':      return <AlertsPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} />;
       case 'settings':    return <SettingsPage dataMode={dataMode} onSetDataMode={handleSetDataMode} backendStatus={backendStatus} />;
-      default:            return <DashboardPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} dataMode={dataMode} />;
+      default:            return <DashboardPage workers={workers} beacons={beacons} onWorkerClick={(id) => setSelectedWorker(id)} dataMode={dataMode} />;
     }
   };
 

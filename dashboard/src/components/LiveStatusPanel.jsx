@@ -17,7 +17,7 @@ function isRecent(timestamp) {
   return (Date.now() - timestamp) < 15000;
 }
 
-const LiveStatusPanel = ({ workers }) => {
+const LiveStatusPanel = ({ workers, beacons = [] }) => {
   const workerList = Object.values(workers).filter(w => w?.live);
   const onlineDevices = workerList.filter(w => isRecent(w.live.timestamp));
   const offlineDevices = workerList.filter(w => !isRecent(w.live.timestamp));
@@ -81,7 +81,20 @@ const LiveStatusPanel = ({ workers }) => {
             Detected Beacons
           </div>
           <div className="live-device-list">
-            {activeBeacons.size === 0 ? (
+            {beacons && beacons.length > 0 ? (
+              beacons.map((b) => {
+                const isOnline = b.status === 'online';
+                return (
+                  <div key={b.beacon_id} className={`live-device-row ${isOnline ? 'online' : 'offline'}`}>
+                    <span className={`live-device-dot ${isOnline ? 'online' : 'offline'}`} />
+                    <span className="live-device-label">{b.beacon_id} ({b.zone || b.machine_id || 'M1'})</span>
+                    <span className={`live-device-tag ${isOnline ? 'online' : 'offline'}`}>
+                      {isOnline ? 'ONLINE' : 'OFFLINE'}
+                    </span>
+                  </div>
+                );
+              })
+            ) : activeBeacons.size === 0 ? (
               <div className="live-device-row offline">
                 <span className="live-device-dot offline" />
                 <span>No beacons detected</span>

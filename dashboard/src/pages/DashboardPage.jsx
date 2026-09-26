@@ -6,13 +6,13 @@ import KeyInsights from '../components/KeyInsights';
 import ModeDurationAnalytics from '../components/ModeDurationAnalytics';
 import LiveStatusPanel from '../components/LiveStatusPanel';
 
-const DashboardPage = ({ workers, onWorkerClick, dataMode }) => {
+const DashboardPage = ({ workers, onWorkerClick, dataMode, beacons = [] }) => {
   const isLive = dataMode === 'live';
 
   return (
     <>
       {/* Live mode: show a device status panel above the map */}
-      {isLive && <LiveStatusPanel workers={workers} />}
+      {isLive && <LiveStatusPanel workers={workers} beacons={beacons} />}
 
       <ZoneMap workers={workers} onWorkerClick={onWorkerClick} dataMode={dataMode} />
       <KPIGrid workers={workers} dataMode={dataMode} />
