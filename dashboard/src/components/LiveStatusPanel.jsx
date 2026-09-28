@@ -11,10 +11,17 @@ const BEACON_LABELS = {
   4: 'Station 4 (End)',
 };
 
-// Returns true if the timestamp is within the last 15 seconds
+// Returns true if the timestamp is within the last 6 seconds (1-second heartbeat engine)
 function isRecent(timestamp) {
   if (!timestamp) return false;
-  return (Date.now() - timestamp) < 15000;
+  return (Date.now() - timestamp) < 6000;
+}
+
+function isBeaconOnline(b) {
+  if (b.status !== 'online') return false;
+  const time = b.last_seen ? new Date(b.last_seen).getTime() : (b.updated_at ? new Date(b.updated_at).getTime() : 0);
+  if (!time) return false;
+  return (Date.now() - time) < 6000;
 }
 
 const LiveStatusPanel = ({ workers, beacons = [] }) => {
@@ -39,8 +46,8 @@ const LiveStatusPanel = ({ workers, beacons = [] }) => {
     <div className="live-status-panel">
       <div className="live-status-header">
         <span className="live-pulse-dot" />
-        <strong>Live Device Status</strong>
-        <span className="live-status-subtitle">Real-time telemetry from detected devices</span>
+        <strong>Live Device Status (1-Second Engine)</strong>
+        <span className="live-status-subtitle">Real-time presence, heartbeat & 10cm touch checkpoints</span>
       </div>
 
       <div className="live-status-grid">
@@ -48,7 +55,7 @@ const LiveStatusPanel = ({ workers, beacons = [] }) => {
         <div className="live-status-block">
           <div className="live-status-block-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
-            Wristbands
+            Wristband Tracking
           </div>
           <div className="live-device-list">
             {onlineDevices.length === 0 && offlineDevices.length === 0 && (
@@ -60,7 +67,7 @@ const LiveStatusPanel = ({ workers, beacons = [] }) => {
             {onlineDevices.map((w, i) => (
               <div key={i} className="live-device-row online">
                 <span className="live-device-dot online" />
-                <span className="live-device-label">{w.live.device_id}</span>
+                <span className="live-device-label">{w.live.device_id} ({w.live.current_machine || 'M1'} - {w.live.last_beacon_id})</span>
                 <span className="live-device-tag online">ONLINE</span>
               </div>
             ))}
@@ -78,16 +85,17 @@ const LiveStatusPanel = ({ workers, beacons = [] }) => {
         <div className="live-status-block">
           <div className="live-status-block-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5.5 11a6.5 6.5 0 0 1 13 0"/><path d="M2 11a10 10 0 0 1 20 0"/><circle cx="12" cy="17" r="1"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-            Detected Beacons
+            Beacon Stations (M1)
           </div>
           <div className="live-device-list">
             {beacons && beacons.length > 0 ? (
-              beacons.map((b) => {
-                const isOnline = b.status === 'online';
+              // Filter to show active/relevant beacons or all seeded M1 beacons
+              beacons.filter(b => b.beacon_id === 'M1-A1' || b.beacon_id === 'M1-B4' || b.beacon_id === 'M1-A2').map((b) => {
+                const isOnline = isBeaconOnline(b);
                 return (
                   <div key={b.beacon_id} className={`live-device-row ${isOnline ? 'online' : 'offline'}`}>
                     <span className={`live-device-dot ${isOnline ? 'online' : 'offline'}`} />
-                    <span className="live-device-label">{b.beacon_id} ({b.zone || b.machine_id || 'M1'})</span>
+                    <span className="live-device-label">{b.beacon_id} ({b.beacon_id === 'M1-A1' ? 'Gate / B1' : 'Midpoint / B2'})</span>
                     <span className={`live-device-tag ${isOnline ? 'online' : 'offline'}`}>
                       {isOnline ? 'ONLINE' : 'OFFLINE'}
                     </span>
@@ -97,7 +105,7 @@ const LiveStatusPanel = ({ workers, beacons = [] }) => {
             ) : activeBeacons.size === 0 ? (
               <div className="live-device-row offline">
                 <span className="live-device-dot offline" />
-                <span>No beacons detected</span>
+                <span>No beacons registered</span>
               </div>
             ) : (
               [...activeBeacons].map((bid, i) => (
