@@ -439,7 +439,7 @@ void loop() {
   }
 
   // Departure Fallback: If band has left Beacon 1's RF range entirely while OUTBOUND, confirm departure
-  if (currentPatrolState == OUTBOUND && !hasLeftStation && (millis() - lastBandSeenTime > 3000) && lastBandSeenTime > lapStartTime) {
+  if (currentPatrolState == OUTBOUND && !hasLeftStation && (millis() - lastBandSeenTime > 3000) && (millis() - lapStartTime > 3000)) {
     hasLeftStation = true;
     Serial.println("[BEACON 1] Departure Confirmed: Band out of Beacon 1 RF coverage area.");
   }
