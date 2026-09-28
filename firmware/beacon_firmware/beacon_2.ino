@@ -350,7 +350,7 @@ void setup() {
 
   lastMovementTime = millis();
   baselineDistance = 1.0;
-  lastHeartbeatTime = millis() + 2500; // Offset heartbeat by 2.5s to eliminate 2s sync collision
+  lastHeartbeatTime = millis() - 2500; // Offset heartbeat by 2.5s without unsigned underflow
   sendBeaconHeartbeat();
   Serial.println("✓ Beacon 2 Active & Broadcasting M1-B4\n");
 }
@@ -374,8 +374,8 @@ void loop() {
     Serial.println("[BEACON 2] Departure Verified via Absence (en route to Station A1).");
   }
 
-  // Release return-leg ownership once worker is far down the corridor towards B1 (RSSI < -75 dBm or out of range > 5s)
-  if (isReturnLegOwner && (currentBandRssi < -75 || millis() - lastBandSeenTime > 5000)) {
+  // Release return-leg ownership once worker is far down the corridor towards B1 (RSSI <= -82 dBm or out of range > 6s)
+  if (isReturnLegOwner && (currentBandRssi <= -82 || millis() - lastBandSeenTime > 6000)) {
     isReturnLegOwner = false;
   }
 
