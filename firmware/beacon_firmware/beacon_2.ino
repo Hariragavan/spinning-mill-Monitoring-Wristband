@@ -97,7 +97,7 @@ float calculateDistance(int rssi) {
   return pow(10.0, ratio);
 }
 
-// 1. Send Online Heartbeat to 'beacons' table (1-Second Engine)
+// 1. Send Online Heartbeat to 'beacons' table (PATCH avoids conflict errors)
 void sendBeaconHeartbeat() {
   if (WiFi.status() != WL_CONNECTED) return;
 
@@ -108,23 +108,14 @@ void sendBeaconHeartbeat() {
   HTTPClient https;
   https.setTimeout(2000);
 
-  String url = String(SUPABASE_URL) + "/rest/v1/beacons?on_conflict=beacon_id";
+  String url = String(SUPABASE_URL) + "/rest/v1/beacons?beacon_id=eq." + String(STATION_ID);
   if (https.begin(client, url)) {
     https.addHeader("Content-Type", "application/json");
     https.addHeader("apikey", SUPABASE_KEY);
     https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-    https.addHeader("Prefer", "resolution=merge-duplicates,return=minimal");
 
-    String payload = "{";
-    payload += "\"beacon_id\":\"" + String(STATION_ID) + "\",";
-    payload += "\"station_id\":\"B4\",";
-    payload += "\"machine_id\":\"M1\",";
-    payload += "\"zone\":\"Side B\",";
-    payload += "\"status\":\"online\",";
-    payload += "\"battery_pct\":100";
-    payload += "}";
-
-    https.POST(payload);
+    String payload = "{\"status\":\"online\",\"battery_pct\":100}";
+    https.PATCH(payload);
     https.end();
   }
 }
@@ -165,17 +156,14 @@ void handleEventUpload() {
     https.end();
   }
 
-  // B. Update Worker Position in 'workers'
-  String workerEndpoint = String(SUPABASE_URL) + "/rest/v1/workers?on_conflict=worker_id";
+  // B. Update Worker Position in 'workers' (PATCH preserves lap_count & lap_duration)
+  String workerEndpoint = String(SUPABASE_URL) + "/rest/v1/workers?worker_id=eq." + String(WORKER_ID);
   if (https.begin(client, workerEndpoint)) {
     https.addHeader("Content-Type", "application/json");
     https.addHeader("apikey", SUPABASE_KEY);
     https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-    https.addHeader("Prefer", "resolution=merge-duplicates,return=minimal");
 
     String payload = "{";
-    payload += "\"worker_id\":\"" + String(WORKER_ID) + "\",";
-    payload += "\"device_id\":\"" + String(TARGET_BAND_NAME) + "\",";
     payload += "\"current_zone\":\"Side B\",";
     payload += "\"last_beacon_id\":\"" + String(STATION_ID) + "\",";
     payload += "\"beacon_rssi\":" + String(queuedRssi) + ",";
@@ -185,7 +173,7 @@ void handleEventUpload() {
     payload += "\"shift_status\":\"active\"";
     payload += "}";
 
-    https.POST(payload);
+    https.PATCH(payload);
     https.end();
   }
 
@@ -293,7 +281,7 @@ void loop() {
   }
 
   // Beacon 2 Heartbeat to 'beacons' table (Marks M1-B4 ONLINE)
-  if (millis() - lastHeartbeatTime >= 3000) {
+  if (millis() - lastHeartbeatTime >= 6000) {
     lastHeartbeatTime = millis();
     sendBeaconHeartbeat();
   }
