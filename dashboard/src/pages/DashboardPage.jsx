@@ -14,7 +14,7 @@ const DashboardPage = ({ workers, onWorkerClick, dataMode, beacons = [] }) => {
       {/* Live mode: show a device status panel above the map */}
       {isLive && <LiveStatusPanel workers={workers} beacons={beacons} />}
 
-      <ZoneMap workers={workers} onWorkerClick={onWorkerClick} dataMode={dataMode} />
+      <ZoneMap workers={workers} beacons={beacons} onWorkerClick={onWorkerClick} dataMode={dataMode} />
       <KPIGrid workers={workers} dataMode={dataMode} />
 
       {/* In live mode, analytics panels are hidden since there is no historical data yet */}
