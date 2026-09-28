@@ -26,7 +26,7 @@
 #include <math.h>
 
 // =================== NETWORK CONFIGURATION ===================
-const char* WIFI_SSID          = "Redmi Note 11T 5G";
+const char* WIFI_SSID          = "Redmi11T";
 const char* WIFI_PASSWORD      = "hari1234";
 
 const char* SUPABASE_URL       = "https://vldhjpvyphzxofmwqmys.supabase.co"; 
@@ -455,8 +455,8 @@ void loop() {
                   peerBeaconDistanceM, peerBeaconRssi);
   }
 
-  // Staggered Timer 2: Beacon Heartbeat every 4 seconds (Keeps M1-A1 ONLINE)
-  if (millis() - lastHeartbeatTime >= 4000) {
+  // Staggered Timer 2: Beacon Heartbeat every 5 seconds (Staggered to eliminate TLS collisions)
+  if (millis() - lastHeartbeatTime >= 5000) {
     lastHeartbeatTime = millis();
     sendBeaconHeartbeat();
   }

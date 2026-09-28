@@ -28,7 +28,7 @@
 #include <math.h>
 
 // =================== NETWORK CONFIGURATION ===================
-const char* WIFI_SSID          = "Redmi Note 11T 5G";
+const char* WIFI_SSID          = "Redmi11T";
 const char* WIFI_PASSWORD      = "hari1234";
 
 const char* SUPABASE_URL       = "https://vldhjpvyphzxofmwqmys.supabase.co"; 
@@ -142,54 +142,66 @@ void handleEventUpload() {
     return;
   }
 
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setTimeout(3000);
+  // A. Log Event in 'telemetry_logs' (Isolated socket scope)
+  {
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(3000);
 
-  HTTPClient https;
-  https.setTimeout(3000);
+    HTTPClient https;
+    https.setTimeout(3000);
 
-  // A. Log Event in 'telemetry_logs'
-  String logEndpoint = String(SUPABASE_URL) + "/rest/v1/telemetry_logs";
-  if (https.begin(client, logEndpoint)) {
-    https.addHeader("Content-Type", "application/json");
-    https.addHeader("apikey", SUPABASE_KEY);
-    https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-    https.addHeader("Prefer", "return=minimal");
+    String logEndpoint = String(SUPABASE_URL) + "/rest/v1/telemetry_logs";
+    if (https.begin(client, logEndpoint)) {
+      https.addHeader("Content-Type", "application/json");
+      https.addHeader("apikey", SUPABASE_KEY);
+      https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+      https.addHeader("Prefer", "return=minimal");
 
-    String payload = "{";
-    payload += "\"station_id\":\"" + String(STATION_ID) + "\",";
-    payload += "\"target_device\":\"" + String(TARGET_BAND_NAME) + "\",";
-    payload += "\"event\":\"HALF_ROUND_COMPLETED\",";
-    payload += "\"signal_rssi\":" + String(queuedRssi) + ",";
-    payload += "\"est_distance_cm\":" + String(queuedDistanceCm, 2) + ",";
-    payload += "\"uptime_ms\":" + String(millis());
-    payload += "}";
+      String payload = "{";
+      payload += "\"station_id\":\"" + String(STATION_ID) + "\",";
+      payload += "\"target_device\":\"" + String(TARGET_BAND_NAME) + "\",";
+      payload += "\"event\":\"HALF_ROUND_COMPLETED\",";
+      payload += "\"lap_duration_sec\":0.00,";
+      payload += "\"signal_rssi\":" + String(queuedRssi) + ",";
+      payload += "\"est_distance_cm\":" + String(queuedDistanceCm, 2) + ",";
+      payload += "\"uptime_ms\":" + String(millis());
+      payload += "}";
 
-    https.POST(payload);
-    https.end();
+      https.POST(payload);
+      https.end();
+    }
   }
 
-  // B. Update Worker Position in 'workers' (PATCH preserves lap_count & lap_duration)
-  String workerEndpoint = String(SUPABASE_URL) + "/rest/v1/workers?worker_id=eq." + String(WORKER_ID);
-  if (https.begin(client, workerEndpoint)) {
-    https.addHeader("Content-Type", "application/json");
-    https.addHeader("apikey", SUPABASE_KEY);
-    https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-    https.addHeader("Prefer", "return=minimal");
+  // B. Update Worker Position in 'workers' (Fresh isolated socket scope)
+  {
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(3000);
 
-    String payload = "{";
-    payload += "\"current_zone\":\"Side B\",";
-    payload += "\"last_beacon_id\":\"" + String(STATION_ID) + "\",";
-    payload += "\"beacon_rssi\":" + String(queuedRssi) + ",";
-    payload += "\"current_machine\":\"M1\",";
-    payload += "\"directional_heading\":\"Return\",";
-    payload += "\"motion_state\":\"walking\",";
-    payload += "\"shift_status\":\"active\"";
-    payload += "}";
+    HTTPClient https;
+    https.setTimeout(3000);
 
-    https.PATCH(payload);
-    https.end();
+    String workerEndpoint = String(SUPABASE_URL) + "/rest/v1/workers?worker_id=eq." + String(WORKER_ID);
+    if (https.begin(client, workerEndpoint)) {
+      https.addHeader("Content-Type", "application/json");
+      https.addHeader("apikey", SUPABASE_KEY);
+      https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+      https.addHeader("Prefer", "return=minimal");
+
+      String payload = "{";
+      payload += "\"current_zone\":\"Side B\",";
+      payload += "\"last_beacon_id\":\"" + String(STATION_ID) + "\",";
+      payload += "\"beacon_rssi\":" + String(queuedRssi) + ",";
+      payload += "\"current_machine\":\"M1\",";
+      payload += "\"directional_heading\":\"Return\",";
+      payload += "\"motion_state\":\"walking\",";
+      payload += "\"shift_status\":\"active\"";
+      payload += "}";
+
+      https.PATCH(payload);
+      https.end();
+    }
   }
 
   pendingEventUpload = false;
@@ -354,11 +366,12 @@ void setup() {
   pBLEScan = BLEDevice::getScan();
   pBLEScan->setAdvertisedDeviceCallbacks(new Beacon2ScannerCallback());
   pBLEScan->setActiveScan(true);
-  pBLEScan->setInterval(120);
-  pBLEScan->setWindow(80);
+  pBLEScan->setInterval(100);
+  pBLEScan->setWindow(99);
 
   lastMovementTime = millis();
   baselineDistance = 1.0;
+  lastHeartbeatTime = millis(); // Initialize heartbeat timer
   sendBeaconHeartbeat();
   Serial.println("✓ Beacon 2 Active & Broadcasting M1-B4\n");
 }
@@ -391,8 +404,8 @@ void loop() {
                   peerBeaconDistanceM, peerBeaconRssi);
   }
 
-  // Beacon 2 Heartbeat to 'beacons' table (Marks M1-B4 ONLINE)
-  if (millis() - lastHeartbeatTime >= 4000) {
+  // Beacon 2 Heartbeat to 'beacons' table (Staggered to 5000ms to eliminate 4-second TLS collisions)
+  if (millis() - lastHeartbeatTime >= 5000) {
     lastHeartbeatTime = millis();
     sendBeaconHeartbeat();
   }
