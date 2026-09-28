@@ -276,9 +276,9 @@ class Beacon2ScannerCallback: public BLEAdvertisedDeviceCallbacks {
         }
       }
 
-      // Departure Detection: Worker moved away from B4 on the return path
+      // Departure Detection: Worker moved away from B4 on the return path (Requires > 1.80m or RSSI <= -65 dBm)
       if (!hasDepartedB2) {
-        if (smoothedDistanceM > 1.50 || currentBandRssi <= -55) {
+        if (smoothedDistanceM > 1.80 || currentBandRssi <= -65) {
           hasDepartedB2 = true;
           Serial.println("[BEACON 2] Departure Verified: Worker en route back to Station A1.");
         }
@@ -350,6 +350,7 @@ void setup() {
 
   lastMovementTime = millis();
   baselineDistance = 1.0;
+  lastHeartbeatTime = millis() + 2500; // Offset heartbeat by 2.5s to eliminate 2s sync collision
   sendBeaconHeartbeat();
   Serial.println("✓ Beacon 2 Active & Broadcasting M1-B4\n");
 }
@@ -367,8 +368,14 @@ void loop() {
     idleDurationSec = (millis() - lastMovementTime) / 1000;
   }
 
-  // Release return leg ownership once band is no longer heard by B2
-  if (isReturnLegOwner && (millis() - lastBandSeenTime > 6000)) {
+  // Departure Timeout Fallback: if worker hasn't been seen for > 4s after a touch, confirm departure
+  if (!hasDepartedB2 && (millis() - lastBandSeenTime > 4000) && (millis() - lastCheckpointTouchTime > 4000)) {
+    hasDepartedB2 = true;
+    Serial.println("[BEACON 2] Departure Verified via Absence (en route to Station A1).");
+  }
+
+  // Release return-leg ownership once worker is far down the corridor towards B1 (RSSI < -75 dBm or out of range > 5s)
+  if (isReturnLegOwner && (currentBandRssi < -75 || millis() - lastBandSeenTime > 5000)) {
     isReturnLegOwner = false;
   }
 

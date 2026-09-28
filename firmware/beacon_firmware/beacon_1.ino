@@ -421,6 +421,7 @@ void setup() {
 
   lastMovementTime = millis();
   baselineDistance = 1.0;
+  lastHeartbeatTime = millis() + 2500; // Offset heartbeat by 2.5s to eliminate 2s sync collision
   sendBeaconHeartbeat();
   Serial.println("✓ Beacon 1 Active & Broadcasting M1-A1\n");
 }
