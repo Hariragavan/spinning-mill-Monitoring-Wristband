@@ -14,7 +14,7 @@ const BEACON_LABELS = {
 // Returns true if the timestamp is within the last 6 seconds (1-second heartbeat engine)
 function isRecent(timestamp) {
   if (!timestamp) return false;
-  return (Date.now() - timestamp) < 6000;
+  return (Date.now() - timestamp) < 15000;
 }
 
 function isBeaconOnline(b) {
@@ -23,7 +23,7 @@ function isBeaconOnline(b) {
   const timeSeen = b.last_seen ? new Date(b.last_seen).getTime() : 0;
   const time = Math.max(timeUpdated, timeSeen);
   if (!time) return false;
-  return (Date.now() - time) < 10000;
+  return (Date.now() - time) < 20000;
 }
 
 const LiveStatusPanel = ({ workers, beacons = [] }) => {

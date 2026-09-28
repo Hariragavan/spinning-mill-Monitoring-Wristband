@@ -58,9 +58,11 @@ int peerBeaconRssi = -99;
 float peerBeaconDistanceM = -1.0;
 unsigned long lastPeerSeenTime = 0;
 
-// 3-Second Idle Engine (RF Filtered)
+// 3-Second Idle Engine (EMA Filtered)
 unsigned long lastMovementTime = 0;
 float baselineDistance = 0.0;
+float smoothedDistanceM = -1.0;
+bool hasHardwareMotion = false;
 String currentMotionState = "stationary";
 int idleDurationSec = 0;
 float walkingSpeed = 0.00;
@@ -124,6 +126,7 @@ void sendBeaconHeartbeat() {
     https.addHeader("Content-Type", "application/json");
     https.addHeader("apikey", SUPABASE_KEY);
     https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+    https.addHeader("Prefer", "return=minimal");
 
     String payload = "{\"status\":\"online\",\"battery_pct\":100}";
     https.PATCH(payload);
@@ -173,6 +176,7 @@ void handleEventUpload() {
     https.addHeader("Content-Type", "application/json");
     https.addHeader("apikey", SUPABASE_KEY);
     https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+    https.addHeader("Prefer", "return=minimal");
 
     String payload = "{";
     payload += "\"current_zone\":\"Side B\",";
@@ -215,6 +219,7 @@ void syncWorkerDashboard() {
     https.addHeader("Content-Type", "application/json");
     https.addHeader("apikey", SUPABASE_KEY);
     https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+    https.addHeader("Prefer", "return=minimal");
 
     String payload = "{";
     payload += "\"current_zone\":\"Side B\",";
@@ -251,13 +256,22 @@ class Beacon2ScannerCallback: public BLEAdvertisedDeviceCallbacks {
     // 2. Wristband Detection
     if (name == TARGET_BAND_NAME) {
       currentBandRssi = rssi;
-      currentBandDistanceM = calculateDistance(rssi);
+      float rawDistance = calculateDistance(rssi);
+      currentBandDistanceM = rawDistance;
       lastBandSeenTime = millis();
+
+      // Exponential Moving Average (EMA) Filter: suppresses indoor RF multipath noise
+      if (smoothedDistanceM < 0.0) {
+        smoothedDistanceM = rawDistance;
+      } else {
+        smoothedDistanceM = (0.70 * smoothedDistanceM) + (0.30 * rawDistance);
+      }
 
       // Hardware Accelerometer Sync (Reads MPU6050 payload from band if available)
       if (advertisedDevice.haveManufacturerData()) {
         std::string mfg = advertisedDevice.getManufacturerData();
         if (mfg.length() >= 2) {
+          hasHardwareMotion = true;
           if ((uint8_t)mfg[0] == 0x01) {
             currentMotionState = "walking";
             walkingSpeed = 1.20;
@@ -270,13 +284,16 @@ class Beacon2ScannerCallback: public BLEAdvertisedDeviceCallbacks {
           }
         }
       } 
-      // RF-Stabilized Motion Filter Fallback (Requires > 0.6m displacement)
-      else if (abs(currentBandDistanceM - baselineDistance) >= 0.60) {
-        lastMovementTime = millis();
-        baselineDistance = currentBandDistanceM;
-        currentMotionState = "walking";
-        walkingSpeed = 1.20;
-        idleDurationSec = 0;
+      // RF-Stabilized Motion Filter Fallback using Smoothed Distance (Requires > 0.80m displacement)
+      else {
+        hasHardwareMotion = false;
+        if (abs(smoothedDistanceM - baselineDistance) >= 0.80) {
+          lastMovementTime = millis();
+          baselineDistance = smoothedDistanceM;
+          currentMotionState = "walking";
+          walkingSpeed = 1.20;
+          idleDurationSec = 0;
+        }
       }
 
       // 10cm Touch Event: Visited Beacon 2 (Half-Round Checkpoint)
@@ -352,8 +369,8 @@ void loop() {
   pBLEScan->start(1, false);
   pBLEScan->clearResults();
 
-  // 3-Second Idle Engine: If stationary for >= 3 seconds, update state
-  if (millis() - lastMovementTime >= 3000) {
+  // 3-Second Idle Engine: If stationary for >= 3 seconds, update state (only when hardware accelerometer is not reporting)
+  if (!hasHardwareMotion && (millis() - lastMovementTime >= 3000)) {
     currentMotionState = "stationary";
     walkingSpeed = 0.00;
     idleDurationSec = (millis() - lastMovementTime) / 1000;
@@ -375,7 +392,7 @@ void loop() {
   }
 
   // Beacon 2 Heartbeat to 'beacons' table (Marks M1-B4 ONLINE)
-  if (millis() - lastHeartbeatTime >= 6000) {
+  if (millis() - lastHeartbeatTime >= 4000) {
     lastHeartbeatTime = millis();
     sendBeaconHeartbeat();
   }

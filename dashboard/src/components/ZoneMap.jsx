@@ -25,7 +25,7 @@ const SIM_ZONES = [
 
 function isRecent(timestamp) {
   if (!timestamp) return false;
-  return (Date.now() - timestamp) < 10000;
+  return (Date.now() - timestamp) < 15000;
 }
 
 function isBeaconOnline(b) {
@@ -34,7 +34,7 @@ function isBeaconOnline(b) {
   const timeSeen = b.last_seen ? new Date(b.last_seen).getTime() : 0;
   const time = Math.max(timeUpdated, timeSeen);
   if (!time) return false;
-  return (Date.now() - time) < 10000;
+  return (Date.now() - time) < 20000;
 }
 
 function getWorkerStatusClass(live) {
