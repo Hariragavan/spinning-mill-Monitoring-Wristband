@@ -9,7 +9,20 @@
 // Device-to-worker mapping (mirrors server/routes/deviceRoutes.js)
 const DEVICE_WORKER_MAP = {
   'ESP32C3-WRIST-01': { worker_id: 'worker_1', name: 'Worker 1' },
+  'WRISTBAND_01': { worker_id: 'worker_1', name: 'Worker 1' },
+  'WRISTBAND_02': { worker_id: 'worker_2', name: 'Worker 2' },
+  'WRISTBAND_03': { worker_id: 'worker_3', name: 'Worker 3' },
 };
+
+export function resolveWorker(deviceId) {
+  if (DEVICE_WORKER_MAP[deviceId]) return DEVICE_WORKER_MAP[deviceId];
+  const match = deviceId?.match(/\d+/);
+  if (match) {
+    const num = parseInt(match[0], 10);
+    return { worker_id: `worker_${num}`, name: `Worker ${num}` };
+  }
+  return { worker_id: deviceId || 'worker_1', name: deviceId || 'Worker 1' };
+}
 
 // Beacon ID to zone mapping
 const BEACON_ZONE_MAP = {
@@ -22,7 +35,9 @@ const BEACON_ZONE_MAP = {
  */
 export function mapDeviceToLive(raw) {
   const beaconInfo = BEACON_ZONE_MAP[raw.location?.beacon_id] || {
-    machine: 'M1', beacon_code: 'A1', zone: 'Side A'
+    machine: raw.machine || 'M1',
+    beacon_code: raw.beacon_code || 'A1',
+    zone: raw.zone || 'Side A'
   };
 
   const patrolState = raw.patrol?.state || 'IDLE';

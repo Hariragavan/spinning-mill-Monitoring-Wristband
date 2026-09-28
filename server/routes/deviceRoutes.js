@@ -11,7 +11,19 @@ const getSupabaseConfig = () => ({
 const DEVICE_WORKER_MAP = {
   'ESP32C3-WRIST-01': { worker_id: 'worker_1', name: 'Worker 1' },
   'WRISTBAND_01': { worker_id: 'worker_1', name: 'Worker 1' },
+  'WRISTBAND_02': { worker_id: 'worker_2', name: 'Worker 2' },
+  'WRISTBAND_03': { worker_id: 'worker_3', name: 'Worker 3' },
 };
+
+function resolveWorker(deviceId) {
+  if (DEVICE_WORKER_MAP[deviceId]) return DEVICE_WORKER_MAP[deviceId];
+  const match = deviceId?.match(/\d+/);
+  if (match) {
+    const num = parseInt(match[0], 10);
+    return { worker_id: `worker_${num}`, name: `Worker ${num}` };
+  }
+  return { worker_id: deviceId || 'worker_1', name: deviceId || 'Worker 1' };
+}
 
 const BEACON_ZONE_MAP = {
   1: { machine: 'M1', beacon_code: 'A1', zone: 'Side A', zone_name: 'Station 1 (Start)' },
@@ -20,7 +32,10 @@ const BEACON_ZONE_MAP = {
 
 function mapDeviceToLive(raw) {
   const beaconInfo = BEACON_ZONE_MAP[raw.location?.beacon_id] || {
-    machine: 'M1', beacon_code: 'A1', zone: 'Side A', zone_name: 'Unknown'
+    machine: raw.machine || 'M1',
+    beacon_code: raw.beacon_code || 'A1',
+    zone: raw.zone || 'Side A',
+    zone_name: 'Checkpoint'
   };
 
   const patrolState = raw.patrol?.state || 'IDLE';
@@ -104,7 +119,7 @@ router.post('/device-data', async (req, res) => {
       }
 
       // 2. Upsert into Supabase table public.workers
-      const workerInfo = DEVICE_WORKER_MAP[payload.device_id] || { worker_id: 'worker_1' };
+      const workerInfo = resolveWorker(payload.device_id);
       const liveData = mapDeviceToLive(payload);
 
       await fetch(`${url}/rest/v1/workers?on_conflict=worker_id`, {
