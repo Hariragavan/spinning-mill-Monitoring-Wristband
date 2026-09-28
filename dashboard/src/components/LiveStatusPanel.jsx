@@ -19,9 +19,11 @@ function isRecent(timestamp) {
 
 function isBeaconOnline(b) {
   if (b.status !== 'online') return false;
-  const time = b.last_seen ? new Date(b.last_seen).getTime() : (b.updated_at ? new Date(b.updated_at).getTime() : 0);
+  const timeUpdated = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+  const timeSeen = b.last_seen ? new Date(b.last_seen).getTime() : 0;
+  const time = Math.max(timeUpdated, timeSeen);
   if (!time) return false;
-  return (Date.now() - time) < 6000;
+  return (Date.now() - time) < 10000;
 }
 
 const LiveStatusPanel = ({ workers, beacons = [] }) => {
