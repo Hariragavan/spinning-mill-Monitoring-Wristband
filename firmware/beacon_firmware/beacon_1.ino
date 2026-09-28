@@ -141,15 +141,15 @@ void sendBeaconHeartbeat() {
   }
 }
 
-// 2. Sync Worker Dashboard to 'workers' table (PATCH prevents location-snapping)
+// 2. Sync Worker Dashboard to 'workers' table (Zone-Guarded to prevent overwriting B2)
 void syncWorkerDashboard() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  bool isBandPresent = (millis() - lastBandSeenTime < 4000) && (currentBandRssi >= LIVE_RSSI_THRESHOLD);
+  // Band is actively within Beacon 1's local station territory (Side A)
+  bool isNearB1 = (millis() - lastBandSeenTime < 4000) && (currentBandRssi >= LOCAL_ZONE_THRESHOLD);
 
-  // CRITICAL FIX: If the band is not actively near Beacon 1, do NOT push worker updates.
-  // This allows Beacon 2 (where the worker is) to be the sole owner of location, heading, and motion!
-  if (!isBandPresent) return;
+  // If worker walked to Beacon 2 / Side B, let Beacon 2 own the live dashboard updates!
+  if (!isNearB1) return;
 
   WiFiClientSecure client;
   client.setInsecure();

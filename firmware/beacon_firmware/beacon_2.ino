@@ -43,6 +43,7 @@ const char* SUPABASE_KEY       = "sb_publishable_UxA-HekCjNWcPPBTmlbyJg_RVErZCmK
 
 #define TOUCH_RSSI_THRESHOLD  -38  // ~10 cm touch check-in
 #define LIVE_RSSI_THRESHOLD   -85  // In-room boundary
+#define LOCAL_ZONE_THRESHOLD  -65  // Inside Side B zone boundary
 
 const int MEASURED_POWER_1M    = -59;
 const float PATH_LOSS_EXPONENT = 2.0;
@@ -191,15 +192,16 @@ void handleEventUpload() {
   Serial.println("[SUPABASE] Half-Round Check-in recorded at Beacon 2 (M1-B4)!");
 }
 
-// 3. Sync Worker Dashboard when band is in Side B range (Guarded against overwriting Beacon 1)
+// 3. Sync Worker Dashboard when band is in Side B range (Zone-Guarded to prevent overwriting B1)
 void syncWorkerDashboard() {
   if (WiFi.status() != WL_CONNECTED) return;
 
-  bool isBandPresent = (millis() - lastBandSeenTime < 4000) && (currentBandRssi >= LIVE_RSSI_THRESHOLD);
+  // Band is actively within Beacon 2's local station territory (Side B)
+  bool isNearB2 = (millis() - lastBandSeenTime < 4000) && (currentBandRssi >= LOCAL_ZONE_THRESHOLD);
 
   // If the band is NOT near Beacon 2, DO NOT touch the workers table!
   // This allows Beacon 1 to own the worker when they are on Side A.
-  if (!isBandPresent) return;
+  if (!isNearB2) return;
 
   WiFiClientSecure client;
   client.setInsecure();
