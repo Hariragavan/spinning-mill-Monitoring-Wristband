@@ -1,15 +1,17 @@
 /*
-  Beacon 2 Station Firmware - ESP32 (Production-Ready Edition)
+  Beacon 2 Station Firmware - ESP32 (Production-Ready Final Edition)
   ---------------------------------------------------------------------------------
   Station: M1-B4 (Midpoint / Half-Round Station)
   Peer Beacon: M1-A1 (Beacon 1 Gateway)
   Monitored Band: WRISTBAND_01
   
-  Key Fixes Applied:
-  1. Prevents "Worker STALE": Retains live return-heading ownership until B1 takes over.
-  2. Departure Latch: Prevents duplicate checkpoint logs if worker stays near B4.
-  3. Staggered Timers: Worker sync every 2s, Beacon heartbeat every 5s on separate ticks.
-  4. Streamlined HTTPS: Eliminates redundant back-to-back TLS handshakes.
+  Architecture:
+  - Dual BLE: Broadcasts "M1-B4" while scanning for "WRISTBAND_01" & "M1-A1"
+  - Periodic 5s Online Heartbeat to 'beacons' table (Keeps M1-B4 ONLINE)
+  - Periodic 2s Live Dashboard Sync to 'workers' table (Side B / Heading Control)
+  - Proximity 10cm Check-in: Logs 'HALF_ROUND_COMPLETED' in 'telemetry_logs'
+  - 3-Second Idle Engine (EMA Noise Filtered)
+  - Non-blocking asynchronous queues (WDT-Safe)
 */
 
 #include <WiFi.h>
@@ -38,7 +40,7 @@ const char* SUPABASE_KEY       = "sb_publishable_UxA-HekCjNWcPPBTmlbyJg_RVErZCmK
 
 #define TOUCH_RSSI_THRESHOLD  -38  // ~10 cm touch check-in
 #define LIVE_RSSI_THRESHOLD   -85  // In-room boundary
-#define LOCAL_ZONE_THRESHOLD  -65  // Inside Side B zone boundary
+#define LOCAL_ZONE_THRESHOLD  -65  // Inside Side B station boundary
 
 const int MEASURED_POWER_1M    = -59;
 const float PATH_LOSS_EXPONENT = 2.0;
@@ -67,6 +69,7 @@ String currentMotionState = "stationary";
 int idleDurationSec = 0;
 float walkingSpeed = 0.00;
 
+// System Timers
 unsigned long lastHeartbeatTime = 0;
 unsigned long lastDashboardSyncTime = 0;
 unsigned long lastMonitorLogTime = 0;
@@ -131,6 +134,7 @@ void sendBeaconHeartbeat() {
     https.PATCH(payload);
     https.end();
   }
+  client.stop(); // Immediate TLS heap cleanup
 }
 
 // 2. Sync Worker Dashboard (Zone-Guarded & Stale-Proof)
@@ -158,12 +162,15 @@ void syncWorkerDashboard() {
     https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
     https.addHeader("Prefer", "return=minimal");
 
+    // Dynamic Heading: "Forward" while approaching B4, "Return" once checkpoint is visited
+    String heading = isReturnLegOwner ? "Return" : "Forward";
+
     String payload = "{";
     payload += "\"current_zone\":\"Side B\",";
     payload += "\"last_beacon_id\":\"" + String(STATION_ID) + "\",";
     payload += "\"beacon_rssi\":" + String(currentBandRssi) + ",";
     payload += "\"current_machine\":\"M1\",";
-    payload += "\"directional_heading\":\"Return\",";
+    payload += "\"directional_heading\":\"" + heading + "\",";
     payload += "\"motion_state\":\"" + currentMotionState + "\",";
     payload += "\"idle_duration_sec\":" + String(idleDurationSec) + ",";
     payload += "\"walking_speed_ms\":" + String(walkingSpeed, 2) + ",";
@@ -174,6 +181,7 @@ void syncWorkerDashboard() {
     https.PATCH(payload);
     https.end();
   }
+  client.stop(); // Immediate TLS heap cleanup
 }
 
 // 3. Upload Half-Round Check-in Event (telemetry_logs)
@@ -214,9 +222,10 @@ void handleEventUpload() {
     }
     https.end();
   }
+  client.stop(); // Immediate TLS heap cleanup
 
   pendingEventUpload = false;
-  syncWorkerDashboard(); // Instant state sync
+  syncWorkerDashboard(); // Instant state sync to update heading to "Return"
 }
 
 // Scanner Callback: Evaluates Wristband and Beacon 1 (M1-A1)
@@ -264,7 +273,7 @@ class Beacon2ScannerCallback: public BLEAdvertisedDeviceCallbacks {
           }
         }
       } 
-      // RF Displacement Fallback (Requires > 0.80m change)
+      // RF Displacement Fallback (Requires > 0.80m displacement)
       else {
         hasHardwareMotion = false;
         if (abs(smoothedDistanceM - baselineDistance) >= 0.80) {
@@ -276,7 +285,7 @@ class Beacon2ScannerCallback: public BLEAdvertisedDeviceCallbacks {
         }
       }
 
-      // Departure Detection: Worker moved away from B4 on the return path (Requires > 1.80m or RSSI <= -65 dBm)
+      // Departure Detection: Worker moved away from B4 on the return path (> 1.80m or RSSI <= -65 dBm)
       if (!hasDepartedB2) {
         if (smoothedDistanceM > 1.80 || currentBandRssi <= -65) {
           hasDepartedB2 = true;
@@ -291,7 +300,7 @@ class Beacon2ScannerCallback: public BLEAdvertisedDeviceCallbacks {
         if (hasDepartedB2) {
           lastCheckpointTouchTime = millis();
           hasDepartedB2 = false;
-          isReturnLegOwner = true; // Claim live updates for return path
+          isReturnLegOwner = true; // Claim live updates for the return path
 
           triggerBlink(6);
           Serial.println("\n***************************************************");
@@ -314,7 +323,9 @@ void setup() {
   digitalWrite(STATUS_LED_PIN, LOW);
   delay(1000);
 
-  Serial.println("\n[BEACON 2] Booting M1-B4 Station...");
+  Serial.println("\n=========================================");
+  Serial.println("   BEACON 2 STATION (M1-B4) STARTING     ");
+  Serial.println("=========================================");
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -350,7 +361,13 @@ void setup() {
 
   lastMovementTime = millis();
   baselineDistance = 1.0;
-  lastHeartbeatTime = millis() - 2500; // Offset heartbeat by 2.5s without unsigned underflow
+  
+  // Initialize timers cleanly (natural stagger: sync at 2s, heartbeat at 5s)
+  lastDashboardSyncTime = millis();
+  lastHeartbeatTime = millis();
+  lastMonitorLogTime = millis();
+  lastWiFiCheck = millis();
+
   sendBeaconHeartbeat();
   Serial.println("✓ Beacon 2 Active & Broadcasting M1-B4\n");
 }
@@ -368,13 +385,13 @@ void loop() {
     idleDurationSec = (millis() - lastMovementTime) / 1000;
   }
 
-  // Departure Timeout Fallback: if worker hasn't been seen for > 4s after a touch, confirm departure
+  // Departure Timeout Fallback: confirm departure if absent for > 4s after touch
   if (!hasDepartedB2 && (millis() - lastBandSeenTime > 4000) && (millis() - lastCheckpointTouchTime > 4000)) {
     hasDepartedB2 = true;
     Serial.println("[BEACON 2] Departure Verified via Absence (en route to Station A1).");
   }
 
-  // Release return-leg ownership once worker is far down the corridor towards B1 (RSSI <= -82 dBm or out of range > 6s)
+  // Release return-leg ownership once worker is well en route to B1 or absent > 6s
   if (isReturnLegOwner && (currentBandRssi <= -82 || millis() - lastBandSeenTime > 6000)) {
     isReturnLegOwner = false;
   }

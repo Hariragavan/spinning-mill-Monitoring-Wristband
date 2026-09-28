@@ -142,6 +142,7 @@ void sendBeaconHeartbeat() {
     https.PATCH(payload);
     https.end();
   }
+  client.stop(); // Immediate TLS heap cleanup
 }
 
 // 2. Sync Worker Dashboard to 'workers' table (Zone-Guarded & Stale-Proof)
@@ -207,6 +208,7 @@ void syncWorkerDashboard() {
     https.PATCH(payload);
     https.end();
   }
+  client.stop(); // Immediate TLS heap cleanup
 }
 
 // 3. Log Checkpoint Events to 'telemetry_logs' table
@@ -247,6 +249,7 @@ void handleEventUpload() {
     }
     https.end();
   }
+  client.stop(); // Immediate TLS heap cleanup
 
   pendingEventUpload = false;
   syncWorkerDashboard();
@@ -421,7 +424,12 @@ void setup() {
 
   lastMovementTime = millis();
   baselineDistance = 1.0;
-  lastHeartbeatTime = millis() - 2500; // Offset heartbeat by 2.5s without unsigned underflow
+  
+  // Initialize timers cleanly (natural stagger: sync at 2s, heartbeat at 5s)
+  lastDashboardSyncTime = millis();
+  lastHeartbeatTime = millis();
+  lastWiFiCheck = millis();
+
   sendBeaconHeartbeat();
   Serial.println("✓ Beacon 1 Active & Broadcasting M1-A1\n");
 }
