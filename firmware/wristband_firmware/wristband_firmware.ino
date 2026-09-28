@@ -1,14 +1,15 @@
 /*
-  Wristband Firmware - ESP32-C3
+  Wristband Firmware - ESP32 / ESP32-C3
   --------------------------------------------------
   Device: Wearable Patrol Band
   ID: WRISTBAND_01
   Role: Continuous BLE Transmitter (Low latency 100ms) + Proximity Scanner
   
   Features:
-  - Fast BLE Advertising: Broadcasts 'WRISTBAND_01' so Beacon 1 and Beacon 2 detect 10cm touch instantly
-  - Mutual Beacon Scanner: Scans for Beacon 1 (M1-A1) and Beacon 2 (M1-B4) to monitor nearest station & range
-  - Motion Engine: Uses MPU6050 accelerometer to detect walking vs 3-second stationary idle
+  - Fast BLE Advertising: Broadcasts 'WRISTBAND_01' (100ms interval) for instant 10cm touch check-in
+  - Hardware Motion Broadcasting: Encodes MPU6050 walking/idle state in BLE manufacturer payload
+  - Non-blocking Background Scanner: Monitors Beacon 1 (M1-A1) and Beacon 2 (M1-B4) with zero CPU lag
+  - 3-Second Idle Engine: Detects stationary idle if no arm swing is measured for >= 3 seconds
 */
 
 #include <BLEDevice.h>
@@ -39,13 +40,33 @@ float b2DistanceM = -1.0;
 
 // Motion Variables
 String motionState = "stationary";
+String lastReportedMotion = "";
 unsigned long lastMovementTime = 0;
 int idleDurationSec = 0;
+int lastReportedIdle = -1;
 
 float calculateDistance(int rssi) {
   if (rssi == 0) return -1.0;
   float ratio = (float)(-59 - rssi) / (10.0 * 2.0);
   return pow(10.0, ratio);
+}
+
+// Dynamically updates BLE advertisement payload with live MPU6050 motion state
+void updateBlePayload() {
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  BLEAdvertisementData advData;
+  advData.setFlags(0x06);
+  advData.setName(DEVICE_NAME);
+
+  // 2-byte Manufacturer Data:
+  // Byte 0: 0x01 = walking, 0x00 = stationary
+  // Byte 1: idle duration in seconds (capped at 255)
+  std::string mfgData = "";
+  mfgData += (char)(motionState == "walking" ? 0x01 : 0x00);
+  mfgData += (char)(idleDurationSec > 255 ? 255 : idleDurationSec);
+  advData.setManufacturerData(mfgData);
+
+  pAdvertising->setAdvertisementData(advData);
 }
 
 // Scanner Callback: Listens for Beacon 1 and Beacon 2
@@ -81,7 +102,7 @@ void setup() {
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
     Serial.println("✓ MPU6050 Accelerometer Ready");
   } else {
-    Serial.println("⚠ MPU6050 not detected. Running motion simulation based on timer.");
+    Serial.println("⚠ MPU6050 not detected. Using simulated timer fallback.");
   }
 
   // 2. Initialize BLE Broadcaster
@@ -92,6 +113,11 @@ void setup() {
   BLEAdvertisementData advData;
   advData.setFlags(0x06);
   advData.setName(DEVICE_NAME);
+  
+  std::string mfgData = "";
+  mfgData += (char)0x00; // stationary
+  mfgData += (char)0x00; // 0s idle
+  advData.setManufacturerData(mfgData);
   pAdvertising->setAdvertisementData(advData);
 
   // 100ms fast advertising interval (160 * 0.625ms = 100ms)
@@ -99,12 +125,13 @@ void setup() {
   pAdvertising->setMaxInterval(160);
   BLEDevice::startAdvertising();
 
-  // 3. Initialize BLE Scanner
+  // 3. Initialize BLE Scanner (Non-blocking background scan)
   pBLEScan = BLEDevice::getScan();
   pBLEScan->setAdvertisedDeviceCallbacks(new WristbandScannerCallback());
   pBLEScan->setActiveScan(true);
   pBLEScan->setInterval(120);
   pBLEScan->setWindow(80);
+  pBLEScan->start(0, nullptr, false); // Asynchronous non-blocking
 
   lastMovementTime = millis();
   Serial.println("✓ BLE Broadcaster ACTIVE: 'WRISTBAND_01' (100ms interval)");
@@ -113,11 +140,7 @@ void setup() {
 }
 
 void loop() {
-  // 1. Scan for nearest beacons
-  pBLEScan->start(1, false);
-  pBLEScan->clearResults();
-
-  // 2. Read Accelerometer Motion
+  // 1. High-frequency MPU6050 Accelerometer Sampling
   if (mpuAvailable) {
     sensors_event_t a, g, temp;
     mpu.getEvent(&a, &g, &temp);
@@ -126,7 +149,7 @@ void loop() {
                             a.acceleration.y * a.acceleration.y +
                             a.acceleration.z * a.acceleration.z);
 
-    // Gravity baseline ~9.8 m/s^2. Any deviation > 1.2 indicates arm walking motion
+    // Gravity baseline ~9.8 m/s^2. Deviation > 1.2 indicates arm walking movement
     if (abs(totalAccel - 9.8) > 1.2) {
       lastMovementTime = millis();
       motionState = "walking";
@@ -134,13 +157,22 @@ void loop() {
     }
   }
 
-  // 3-Second Idle Engine
+  // 2. 3-Second Idle Engine
   if (millis() - lastMovementTime >= 3000) {
     motionState = "stationary";
     idleDurationSec = (millis() - lastMovementTime) / 1000;
   }
 
-  // 3. Print Local Range Telemetry
+  // 3. Update BLE Advertising payload when state changes or every 1 second
+  static unsigned long lastBleUpdate = 0;
+  if (motionState != lastReportedMotion || abs(idleDurationSec - lastReportedIdle) >= 1 || millis() - lastBleUpdate >= 1000) {
+    lastBleUpdate = millis();
+    lastReportedMotion = motionState;
+    lastReportedIdle = idleDurationSec;
+    updateBlePayload();
+  }
+
+  // 4. Print Local Range Telemetry every 1.5 seconds
   static unsigned long lastLog = 0;
   if (millis() - lastLog >= 1500) {
     lastLog = millis();
@@ -151,4 +183,13 @@ void loop() {
                   b2DistanceM, b2Rssi,
                   nearest.c_str());
   }
+
+  // 5. Periodic cleanup of scan results every 10 seconds to avoid heap fragmentation
+  static unsigned long lastScanClear = 0;
+  if (millis() - lastScanClear >= 10000) {
+    lastScanClear = millis();
+    pBLEScan->clearResults();
+  }
+
+  delay(50); // Responsive 20Hz loop rate
 }

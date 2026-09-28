@@ -63,9 +63,12 @@ CREATE TABLE IF NOT EXISTS public.workers (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Ensure numeric precision for decimal lap durations
+-- Ensure numeric precision for decimal lap durations and universal timestamp compatibility
 ALTER TABLE IF EXISTS public.workers 
     ALTER COLUMN lap_duration_sec TYPE NUMERIC(10, 2);
+
+ALTER TABLE IF EXISTS public.workers 
+    ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ DEFAULT NOW();
 
 -- Enable full row replication for Supabase Realtime WebSocket listeners
 ALTER TABLE public.workers REPLICA IDENTITY FULL;
@@ -135,10 +138,22 @@ SET status = 'online', last_seen = NOW(), updated_at = NOW();
 -- ------------------------------------------------------------
 -- STEP 5: AUTOMATIC updated_at TRIGGER FUNCTION
 -- ------------------------------------------------------------
+-- ------------------------------------------------------------
+-- STEP 5: AUTOMATIC TIMESTAMP TRIGGER FUNCTIONS
+-- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION update_beacon_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    NEW.last_seen = NOW();
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -153,7 +168,7 @@ DROP TRIGGER IF EXISTS update_beacons_updated_at ON public.beacons;
 CREATE TRIGGER update_beacons_updated_at
 BEFORE UPDATE ON public.beacons
 FOR EACH ROW
-EXECUTE FUNCTION update_updated_at_column();
+EXECUTE FUNCTION update_beacon_timestamp();
 
 -- ------------------------------------------------------------
 -- STEP 6: ROW LEVEL SECURITY (RLS) & PUBLIC ACCESS POLICIES

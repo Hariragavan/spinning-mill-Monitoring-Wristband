@@ -13,6 +13,8 @@
       * Updates worker's live location to Side B / M1-B4 and Heading to 'Return'
   - BLE Broadcaster: Broadcasts M1-B4 so Beacon 1 & Wristband detect it
   - BLE Scanner: Listens for Wristband and Beacon 1
+  - Safe 3000ms HTTP Timeouts (Eliminates TLS Handshake abort bugs)
+  - Multi-Beacon Arbitration: Only updates worker status when band is actively present
 */
 
 #include <WiFi.h>
@@ -55,9 +57,17 @@ int peerBeaconRssi = -99;
 float peerBeaconDistanceM = -1.0;
 unsigned long lastPeerSeenTime = 0;
 
+// 3-Second Idle Engine (RF Filtered)
+unsigned long lastMovementTime = 0;
+float baselineDistance = 0.0;
+String currentMotionState = "stationary";
+int idleDurationSec = 0;
+float walkingSpeed = 0.00;
+
 unsigned long lastTransitionTime = 0;
 unsigned long lastHeartbeatTime = 0;
 unsigned long lastSyncTime = 0;
+unsigned long lastDashboardSyncTime = 0;
 unsigned long lastWiFiCheck = 0;
 
 // Asynchronous Queues
@@ -103,10 +113,10 @@ void sendBeaconHeartbeat() {
 
   WiFiClientSecure client;
   client.setInsecure();
-  client.setTimeout(2);
+  client.setTimeout(3000);
 
   HTTPClient https;
-  https.setTimeout(2000);
+  https.setTimeout(3000);
 
   String url = String(SUPABASE_URL) + "/rest/v1/beacons?beacon_id=eq." + String(STATION_ID);
   if (https.begin(client, url)) {
@@ -130,7 +140,7 @@ void handleEventUpload() {
 
   WiFiClientSecure client;
   client.setInsecure();
-  client.setTimeout(3);
+  client.setTimeout(3000);
 
   HTTPClient https;
   https.setTimeout(3000);
@@ -181,6 +191,47 @@ void handleEventUpload() {
   Serial.println("[SUPABASE] Half-Round Check-in recorded at Beacon 2 (M1-B4)!");
 }
 
+// 3. Sync Worker Dashboard when band is in Side B range (Guarded against overwriting Beacon 1)
+void syncWorkerDashboard() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  bool isBandPresent = (millis() - lastBandSeenTime < 4000) && (currentBandRssi >= LIVE_RSSI_THRESHOLD);
+
+  // If the band is NOT near Beacon 2, DO NOT touch the workers table!
+  // This allows Beacon 1 to own the worker when they are on Side A.
+  if (!isBandPresent) return;
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(3000);
+
+  HTTPClient https;
+  https.setTimeout(3000);
+
+  String url = String(SUPABASE_URL) + "/rest/v1/workers?worker_id=eq." + String(WORKER_ID);
+  if (https.begin(client, url)) {
+    https.addHeader("Content-Type", "application/json");
+    https.addHeader("apikey", SUPABASE_KEY);
+    https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+
+    String payload = "{";
+    payload += "\"current_zone\":\"Side B\",";
+    payload += "\"last_beacon_id\":\"" + String(STATION_ID) + "\",";
+    payload += "\"beacon_rssi\":" + String(currentBandRssi) + ",";
+    payload += "\"current_machine\":\"M1\",";
+    payload += "\"directional_heading\":\"Return\",";
+    payload += "\"motion_state\":\"" + currentMotionState + "\",";
+    payload += "\"idle_duration_sec\":" + String(idleDurationSec) + ",";
+    payload += "\"walking_speed_ms\":" + String(walkingSpeed, 2) + ",";
+    payload += "\"shift_status\":\"active\",";
+    payload += "\"beacon_battery_pct\":100";
+    payload += "}";
+
+    https.PATCH(payload);
+    https.end();
+  }
+}
+
 // Scanner Callback: Listens for Wristband and Beacon 1 (M1-A1)
 class Beacon2ScannerCallback: public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
@@ -200,6 +251,31 @@ class Beacon2ScannerCallback: public BLEAdvertisedDeviceCallbacks {
       currentBandRssi = rssi;
       currentBandDistanceM = calculateDistance(rssi);
       lastBandSeenTime = millis();
+
+      // Hardware Accelerometer Sync (Reads MPU6050 payload from band if available)
+      if (advertisedDevice.haveManufacturerData()) {
+        std::string mfg = advertisedDevice.getManufacturerData();
+        if (mfg.length() >= 2) {
+          if ((uint8_t)mfg[0] == 0x01) {
+            currentMotionState = "walking";
+            walkingSpeed = 1.20;
+            idleDurationSec = 0;
+            lastMovementTime = millis();
+          } else {
+            currentMotionState = "stationary";
+            walkingSpeed = 0.00;
+            idleDurationSec = (uint8_t)mfg[1];
+          }
+        }
+      } 
+      // RF-Stabilized Motion Filter Fallback (Requires > 0.6m displacement)
+      else if (abs(currentBandDistanceM - baselineDistance) >= 0.60) {
+        lastMovementTime = millis();
+        baselineDistance = currentBandDistanceM;
+        currentMotionState = "walking";
+        walkingSpeed = 1.20;
+        idleDurationSec = 0;
+      }
 
       // 10cm Touch Event: Visited Beacon 2 (Half-Round Checkpoint)
       if (currentBandRssi >= TOUCH_RSSI_THRESHOLD) {
@@ -262,6 +338,8 @@ void setup() {
   pBLEScan->setInterval(120);
   pBLEScan->setWindow(80);
 
+  lastMovementTime = millis();
+  baselineDistance = 1.0;
   sendBeaconHeartbeat();
   Serial.println("✓ Beacon 2 Active & Broadcasting M1-B4\n");
 }
@@ -272,11 +350,25 @@ void loop() {
   pBLEScan->start(1, false);
   pBLEScan->clearResults();
 
+  // 3-Second Idle Engine: If stationary for >= 3 seconds, update state
+  if (millis() - lastMovementTime >= 3000) {
+    currentMotionState = "stationary";
+    walkingSpeed = 0.00;
+    idleDurationSec = (millis() - lastMovementTime) / 1000;
+  }
+
+  // Periodic Worker Dashboard Sync every 2 seconds (only fires if band is present at B2)
+  if (millis() - lastDashboardSyncTime >= 2000) {
+    lastDashboardSyncTime = millis();
+    syncWorkerDashboard();
+  }
+
   // Print Monitor Log every 2 seconds
   if (millis() - lastSyncTime >= 2000) {
     lastSyncTime = millis();
-    Serial.printf("[B2 MONITOR] Band: %.2fm (%d dBm) | Peer B1 (M1-A1): %.1fm (%d dBm)\n",
+    Serial.printf("[B2 MONITOR] Band: %.2fm (%d dBm) | Motion: %s (%ds) | Peer B1: %.1fm (%d dBm)\n",
                   currentBandDistanceM, currentBandRssi,
+                  currentMotionState.c_str(), idleDurationSec,
                   peerBeaconDistanceM, peerBeaconRssi);
   }
 

@@ -55,6 +55,7 @@ unsigned long lapStartTime = 0;
 unsigned long lastTransitionTime = 0;
 int completedLapCount = 0;
 float lastCompletedDuration = 0.00;
+bool hasLeftStation = false; // Prevents false round completion if worker stays at B1
 BLEScan* pBLEScan;
 
 // Band & Peer Beacon Tracking
@@ -123,10 +124,10 @@ void sendBeaconHeartbeat() {
 
   WiFiClientSecure client;
   client.setInsecure();
-  client.setTimeout(2);
+  client.setTimeout(3000);
 
   HTTPClient https;
-  https.setTimeout(2000);
+  https.setTimeout(3000);
 
   String url = String(SUPABASE_URL) + "/rest/v1/beacons?beacon_id=eq." + String(STATION_ID);
   if (https.begin(client, url)) {
@@ -145,14 +146,17 @@ void syncWorkerDashboard() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   bool isBandPresent = (millis() - lastBandSeenTime < 4000) && (currentBandRssi >= LIVE_RSSI_THRESHOLD);
-  bool isNearB1 = isBandPresent && (currentBandRssi >= LOCAL_ZONE_THRESHOLD);
+
+  // CRITICAL FIX: If the band is not actively near Beacon 1, do NOT push worker updates.
+  // This allows Beacon 2 (where the worker is) to be the sole owner of location, heading, and motion!
+  if (!isBandPresent) return;
 
   WiFiClientSecure client;
   client.setInsecure();
-  client.setTimeout(2);
+  client.setTimeout(3000);
 
   HTTPClient https;
-  https.setTimeout(2000);
+  https.setTimeout(3000);
 
   String url = String(SUPABASE_URL) + "/rest/v1/workers?worker_id=eq." + String(WORKER_ID);
   if (https.begin(client, url)) {
@@ -168,12 +172,9 @@ void syncWorkerDashboard() {
     }
 
     String payload = "{";
-    // Only claim Side A / M1-A1 when worker is locally near Beacon 1
-    if (isNearB1) {
-      payload += "\"current_zone\":\"Side A\",";
-      payload += "\"last_beacon_id\":\"" + String(STATION_ID) + "\",";
-    }
-    payload += "\"beacon_rssi\":" + String(isBandPresent ? currentBandRssi : -85) + ",";
+    payload += "\"current_zone\":\"Side A\",";
+    payload += "\"last_beacon_id\":\"" + String(STATION_ID) + "\",";
+    payload += "\"beacon_rssi\":" + String(currentBandRssi) + ",";
     payload += "\"current_machine\":\"M1\",";
     payload += "\"lap_count\":" + String(completedLapCount) + ",";
     payload += "\"lap_duration_sec\":" + String(liveDuration, 2) + ",";
@@ -200,7 +201,7 @@ void handleEventUpload() {
 
   WiFiClientSecure client;
   client.setInsecure();
-  client.setTimeout(3);
+  client.setTimeout(3000);
 
   HTTPClient https;
   https.setTimeout(3000);
@@ -253,13 +254,37 @@ class Beacon1ScannerCallback: public BLEAdvertisedDeviceCallbacks {
       currentBandDistanceM = calculateDistance(rssi);
       lastBandSeenTime = millis();
 
-      // RF-Stabilized Motion Filter (Requires > 0.6m displacement to avoid RF jitter)
-      if (abs(currentBandDistanceM - baselineDistance) >= 0.60) {
+      // Hardware Accelerometer Sync (Reads MPU6050 payload from band if available)
+      if (advertisedDevice.haveManufacturerData()) {
+        std::string mfg = advertisedDevice.getManufacturerData();
+        if (mfg.length() >= 2) {
+          if ((uint8_t)mfg[0] == 0x01) {
+            currentMotionState = "walking";
+            walkingSpeed = 1.20;
+            idleDurationSec = 0;
+            lastMovementTime = millis();
+          } else {
+            currentMotionState = "stationary";
+            walkingSpeed = 0.00;
+            idleDurationSec = (uint8_t)mfg[1];
+          }
+        }
+      } 
+      // RF-Stabilized Motion Filter Fallback (Displacement > 0.60m)
+      else if (abs(currentBandDistanceM - baselineDistance) >= 0.60) {
         lastMovementTime = millis();
         baselineDistance = currentBandDistanceM;
         currentMotionState = "walking";
         walkingSpeed = 1.20;
         idleDurationSec = 0;
+      }
+
+      // Departure Detection: Once lap starts, confirm worker actually walked away (> 2.0m or signal dropped)
+      if (currentPatrolState == OUTBOUND && !hasLeftStation) {
+        if (currentBandDistanceM > 2.0 || currentBandRssi < -65) {
+          hasLeftStation = true;
+          Serial.println("[BEACON 1] Departure Confirmed: Worker walked away from Station A1 toward B4.");
+        }
       }
 
       // 10 cm Touch Check-in Event
@@ -269,6 +294,7 @@ class Beacon1ScannerCallback: public BLEAdvertisedDeviceCallbacks {
         // A. START ROUND
         if (currentPatrolState == IDLE || currentPatrolState == COMPLETED) {
           currentPatrolState = OUTBOUND;
+          hasLeftStation = false; // Reset departure flag for new lap
           lapStartTime = millis();
           lastTransitionTime = millis();
           currentHeading = "Forward";
@@ -285,9 +311,10 @@ class Beacon1ScannerCallback: public BLEAdvertisedDeviceCallbacks {
           queuedDistanceCm = currentBandDistanceM * 100.0;
           pendingEventUpload = true;
         }
-        // B. FINISH 1 ROUND (Returning to B1 after visiting B2)
-        else if (currentPatrolState == RETURNING || (currentPatrolState == OUTBOUND && millis() - lapStartTime > 8000)) {
+        // B. FINISH 1 ROUND (Returning to B1 after visiting B2 - requires confirmed departure)
+        else if (currentPatrolState == RETURNING || (currentPatrolState == OUTBOUND && hasLeftStation && millis() - lapStartTime > 8000)) {
           currentPatrolState = COMPLETED;
+          hasLeftStation = false;
           completedLapCount++;
           lastCompletedDuration = (millis() - lapStartTime) / 1000.0;
           lastTransitionTime = millis();
@@ -309,6 +336,10 @@ class Beacon1ScannerCallback: public BLEAdvertisedDeviceCallbacks {
           // Auto-start subsequent lap timer
           lapStartTime = millis();
           currentPatrolState = OUTBOUND;
+          hasLeftStation = false;
+        }
+        else if (currentPatrolState == OUTBOUND && !hasLeftStation) {
+          Serial.println("[BEACON 1] 10cm Touch Ignored: Worker has not departed Station A1 yet! Walk to B4 first.");
         }
       }
     }
@@ -375,6 +406,12 @@ void loop() {
     currentMotionState = "stationary";
     walkingSpeed = 0.00;
     idleDurationSec = (millis() - lastMovementTime) / 1000;
+  }
+
+  // Departure Fallback: If band has left Beacon 1's RF range entirely while OUTBOUND, confirm departure
+  if (currentPatrolState == OUTBOUND && !hasLeftStation && (millis() - lastBandSeenTime > 4000) && lastBandSeenTime > lapStartTime) {
+    hasLeftStation = true;
+    Serial.println("[BEACON 1] Departure Confirmed: Band out of Beacon 1 RF coverage area.");
   }
 
   // Staggered Timer 1: Live Worker Dashboard Sync every 2 seconds
