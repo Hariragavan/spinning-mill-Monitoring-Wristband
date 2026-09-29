@@ -29,10 +29,10 @@
 #include <math.h>
 
 // ---------------- CONFIG ----------------
-const char* WIFI_SSID    = "Redmi11T";
-const char* WIFI_PASS    = "hari1234";
-const char* SUPABASE_URL = "https://vldhjpvyphzxofmwqmys.supabase.co";   // no trailing slash
-const char* SUPABASE_KEY = "sb_publishable_UxA-HekCjNWcPPBTmlbyJg_RVErZCmK";
+const char* WIFI_SSID    = "YOUR_WIFI_SSID";
+const char* WIFI_PASS    = "YOUR_WIFI_PASSWORD";
+const char* SUPABASE_URL = "https://YOUR_PROJECT_ID.supabase.co";   // no trailing slash
+const char* SUPABASE_KEY = "YOUR_SUPABASE_ANON_KEY";
 
 const char* BEACON_ID    = "M1-A1";
 const char* PEER_ID      = "M1-B4";

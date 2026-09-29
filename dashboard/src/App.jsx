@@ -88,7 +88,7 @@ function App() {
     const fetchSupabaseWorkers = async () => {
       try {
         const { data, error } = await supabase.from('workers').select('*');
-        if (!error && data && data.length > 0 && !cancelled) {
+        if (!error && data && !cancelled) {
           const formatted = {};
           for (const r of data) {
             formatted[r.worker_id] = { live: formatSupabaseWorker(r) };
@@ -116,7 +116,7 @@ function App() {
       }
     };
 
-    // 2. Fallback fetch from Express Backend
+    // 2. Fallback fetch from Express Backend (only used in simulation mode)
     const fetchBackendWorkers = async () => {
       try {
         const response = await fetch(`${API_BASE_URL}/workers`);
@@ -139,7 +139,7 @@ function App() {
     const initData = async () => {
       const fromSupabase = await fetchSupabaseWorkers();
       await fetchSupabaseBeacons();
-      if (!fromSupabase) {
+      if (!fromSupabase && dataMode === 'simulation') {
         await fetchBackendWorkers();
       }
       if (!cancelled) setLoading(false);

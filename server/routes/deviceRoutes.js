@@ -231,17 +231,8 @@ router.get('/workers', async (req, res) => {
       }
     }
 
-    // Fallback if empty
-    const fallbackWorkers = {};
-    for (const deviceId of deviceIds) {
-      const workerInfo = DEVICE_WORKER_MAP[deviceId];
-      if (!fallbackWorkers[workerInfo.worker_id]) {
-        fallbackWorkers[workerInfo.worker_id] = {
-          live: mapDeviceToLive({ device_id: deviceId })
-        };
-      }
-    }
-    res.json(fallbackWorkers);
+    // No workers found in Supabase
+    res.json({});
   } catch (error) {
     console.error('Error fetching workers from Supabase:', error.message);
     res.status(500).json({ error: error.message });
