@@ -1,66 +1,132 @@
 import React from 'react';
 
-const insights = [
-  {
-    category: 'Electrical Break',
-    simpleText: 'Elec Break: Machine 1 sensor tripped due to power surge.',
-    time: '10 min ago',
-    progress: 85,
-    color: '#ef4444',
-    bgColor: '#fef2f2',
-    borderColor: '#fecaca',
-    icon: (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
-      </svg>
-    ),
-  },
-  {
-    category: 'Mechanical Break',
-    simpleText: 'Mech Break: Machine 3 spindle drive belt replacement.',
-    time: '25 min ago',
-    progress: 65,
-    color: '#f97316',
-    bgColor: '#fff7ed',
-    borderColor: '#fed7aa',
-    icon: (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-        <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
-      </svg>
-    ),
-  },
-  {
-    category: 'Machine Cleaning',
-    simpleText: 'Cleaning: Machine 2 suction unit & roller fluff removal.',
-    time: '40 min ago',
-    progress: 45,
-    color: '#06b6d4',
-    bgColor: '#ecfeff',
-    borderColor: '#cff4fc',
-    icon: (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-        <path d="M3 21h18"/><path d="M19 21v-4a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v4"/><path d="M12 3v12"/>
-      </svg>
-    ),
-  },
-  {
-    category: 'Shift Meeting',
-    title: 'Supervisor Briefing',
-    simpleText: 'Meeting: Shift patrol targets & safety alignment.',
-    time: '1 hr ago',
-    progress: 25,
-    color: '#6366f1',
-    bgColor: '#eef2ff',
-    borderColor: '#c7d2fe',
-    icon: (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
-      </svg>
-    ),
-  },
-];
+const KeyInsights = ({ workers = {}, telemetryLogs = [] }) => {
+  const workerList = Object.entries(workers).filter(([, d]) => d?.live);
+  const primaryWorker = workerList[0]?.live;
 
-const KeyInsights = () => {
+  // Build real dynamic insights from actual telemetry
+  const insights = [];
+
+  if (telemetryLogs.length > 0) {
+    telemetryLogs.slice(0, 4).forEach((log, idx) => {
+      const timeAgo = Math.max(1, Math.round((Date.now() - new Date(log.created_at).getTime()) / 60000));
+      if (log.event === 'TOUCH') {
+        insights.push({
+          category: 'Checkpoint Touch',
+          simpleText: `Verified 10cm touch at beacon ${log.target_beacon || 'station'} by ${log.target_device || 'operator'}.`,
+          time: `${timeAgo} min ago`,
+          progress: 90 - idx * 15,
+          color: '#0d9488',
+          bgColor: '#f0fdfa',
+          borderColor: '#ccfbf1',
+          icon: (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+              <path d="M5.5 11a6.5 6.5 0 0 1 13 0"/><path d="M2 11a10 10 0 0 1 20 0"/><circle cx="12" cy="17" r="1"/><line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+          ),
+        });
+      } else if (log.event === 'ROUND_COMPLETED') {
+        insights.push({
+          category: 'Patrol Complete',
+          simpleText: `Full inspection round completed across Machine 1 stations.`,
+          time: `${timeAgo} min ago`,
+          progress: 100,
+          color: '#10b981',
+          bgColor: '#ecfdf5',
+          borderColor: '#a7f3d0',
+          icon: (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+          ),
+        });
+      } else if (log.event === 'EMERGENCY_ASSIST') {
+        insights.push({
+          category: 'Assistance Alert',
+          simpleText: `Worker assistance button pressed at ${log.target_beacon || 'machine floor'}.`,
+          time: `${timeAgo} min ago`,
+          progress: 100,
+          color: '#ef4444',
+          bgColor: '#fef2f2',
+          borderColor: '#fecaca',
+          icon: (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+              <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+            </svg>
+          ),
+        });
+      }
+    });
+  }
+
+  // If we don't have 4 logs, supplement with live worker status
+  if (primaryWorker && insights.length < 4) {
+    if (primaryWorker.motion_state === 'walking') {
+      insights.push({
+        category: 'Active Patrol',
+        simpleText: `Operator actively patrolling ${primaryWorker.current_machine || 'M1'} (${primaryWorker.directional_heading || 'Forward'}).`,
+        time: 'Live now',
+        progress: 85,
+        color: '#2563eb',
+        bgColor: '#eff6ff',
+        borderColor: '#bfdbfe',
+        icon: (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+          </svg>
+        ),
+      });
+    } else {
+      insights.push({
+        category: 'Stationary Check',
+        simpleText: `Operator paused at ${primaryWorker.last_beacon_id} (${primaryWorker.idle_duration_sec || 0}s).`,
+        time: 'Live now',
+        progress: 60,
+        color: '#f59e0b',
+        bgColor: '#fffbeb',
+        borderColor: '#fde68a',
+        icon: (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+          </svg>
+        ),
+      });
+    }
+
+    insights.push({
+      category: 'Telemetry Sync',
+      simpleText: `Direct BLE-to-Supabase synchronization active for ${primaryWorker.device_id}.`,
+      time: 'Live now',
+      progress: 95,
+      color: '#0d9488',
+      bgColor: '#f0fdfa',
+      borderColor: '#ccfbf1',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+          <rect x="2" y="6" width="20" height="12" rx="3"/><circle cx="7" cy="12" r="2"/><path d="M12 9v6"/>
+        </svg>
+      ),
+    });
+  }
+
+  // Fallback if floor is completely idle
+  if (insights.length === 0) {
+    insights.push({
+      category: 'System Ready',
+      simpleText: 'Awaiting beacon heartbeats and operator patrol telemetry from floor.',
+      time: 'Online',
+      progress: 50,
+      color: '#64748b',
+      bgColor: '#f8fafc',
+      borderColor: '#e2e8f0',
+      icon: (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+        </svg>
+      ),
+    });
+  }
+
   return (
     <div className="card chart-card">
       <div className="card-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -68,10 +134,10 @@ const KeyInsights = () => {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
           </svg>
-          Key Insights & Logs
+          Key Telemetry Insights
         </div>
         <span style={{ fontSize: '0.68rem', fontWeight: 700, color: '#64748b', background: '#f1f5f9', padding: '2px 8px', borderRadius: 12 }}>
-          Live Log Status
+          Live Log Feed
         </span>
       </div>
 
@@ -95,14 +161,14 @@ const KeyInsights = () => {
 
             <div className="clean-insight-text">{item.simpleText}</div>
 
-            {/* Horizontal progress bar with circular end node (matching diagram) */}
             <div className="insight-bar-track">
               <div 
                 className="insight-bar-fill" 
-                style={{ width: `${item.progress}%`, background: item.color }}
-              >
-                <span className="insight-bar-dot" style={{ background: item.color }} />
-              </div>
+                style={{ 
+                  width: `${item.progress}%`,
+                  background: item.color
+                }} 
+              />
             </div>
           </div>
         ))}

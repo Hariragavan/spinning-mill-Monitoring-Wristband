@@ -24,7 +24,6 @@ const ZONES = [
   { id: 'zone-a', label: 'ZONE A', machine: 'M1', machineName: 'Machine 1' },
   { id: 'zone-b', label: 'ZONE B', machine: 'M2', machineName: 'Machine 2' },
   { id: 'zone-c', label: 'ZONE C', machine: 'M3', machineName: 'Machine 3' },
-  { id: 'zone-d', label: 'ZONE D', machine: null, machineName: 'Maintenance Bay' },
 ];
 
 function isRecent(timestamp) {
@@ -33,12 +32,15 @@ function isRecent(timestamp) {
 }
 
 function isBeaconOnline(b) {
-  if (!b || b.status !== 'online') return false;
-  const timeUpdated = b.updated_at ? new Date(b.updated_at).getTime() : 0;
-  const timeSeen = b.last_seen ? new Date(b.last_seen).getTime() : 0;
-  const time = Math.max(timeUpdated, timeSeen);
-  if (!time) return false;
-  return (Date.now() - time) < 25000;
+  if (!b) return false;
+  if (b.status === 'online') {
+    const timeUpdated = b.updated_at ? new Date(b.updated_at).getTime() : 0;
+    const timeSeen = b.last_seen ? new Date(b.last_seen).getTime() : 0;
+    const time = Math.max(timeUpdated, timeSeen);
+    if (!time) return true;
+    return (Date.now() - time) < 60000;
+  }
+  return false;
 }
 
 function isOnSideA(w) {
@@ -80,6 +82,19 @@ const ZoneMap = ({ workers = {}, beacons = [], onWorkerClick }) => {
     .filter(([, d]) => d?.live)
     .map(([id, d]) => ({ id, ...d.live }));
 
+  // Filter machines: show machine layout ONLY when any beacon is active for that machine (or worker active on it)
+  const activeZones = ZONES.filter(zone => {
+    const hasOnlineBeacon = onlineBeacons.some(b => {
+      const mId = b.machine_id || (b.beacon_id ? b.beacon_id.split('-')[0] : '');
+      return mId === zone.machine;
+    });
+    const hasActiveWorker = allWorkers.some(w => {
+      const mId = w.current_machine || (w.last_beacon_id ? w.last_beacon_id.split('-')[0] : '');
+      return mId === zone.machine && isRecent(w.timestamp);
+    });
+    return hasOnlineBeacon || hasActiveWorker;
+  });
+
   return (
     <div className="card zone-map-card">
       <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -92,43 +107,40 @@ const ZoneMap = ({ workers = {}, beacons = [], onWorkerClick }) => {
         <span style={{ fontWeight: 800, letterSpacing: '0.04em' }}>FACTORY FLOOR — LIVE TRACKING</span>
       </div>
 
-      <div className="zone-grid">
-        {ZONES.map(zone => {
-          // Special Maintenance Bay card
-          if (!zone.machine) {
-            return (
-              <div key={zone.id} className="zone-cell">
-                <div className="zone-cell-header">
-                  <div className="zone-title-group">
-                    <span className="zone-machine-title">{zone.machineName}</span>
-                    <span className="zone-tag">{zone.label}</span>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, minHeight: '120px', color: '#94a3b8' }}>
-                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ marginBottom: '8px' }}>
-                    <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
-                  </svg>
-                  <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#94a3b8' }}>No active machine</span>
-                </div>
-              </div>
-            );
-          }
+      <div className="zone-grid" style={{ gridTemplateColumns: activeZones.length === 1 ? '1fr' : 'repeat(auto-fit, minmax(420px, 1fr))' }}>
+        {activeZones.length === 0 ? (
+          <div className="zone-cell empty-floor-standby" style={{ gridColumn: '1 / -1', minHeight: '180px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '32px', textAlign: 'center', background: '#fafbfc' }}>
+            <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12 }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M5.5 11a6.5 6.5 0 0 1 13 0"/><path d="M2 11a10 10 0 0 1 20 0"/><circle cx="12" cy="17" r="1"/><line x1="12" y1="17" x2="12" y2="21"/>
+              </svg>
+            </div>
+            <div style={{ fontWeight: 700, fontSize: '1rem', color: '#1e293b', marginBottom: 6 }}>
+              Awaiting Active Beacon Telemetry
+            </div>
+            <div style={{ fontSize: '0.84rem', color: '#64748b', maxWidth: '480px', lineHeight: 1.5 }}>
+              The machine layout will display automatically when any beacon for that machine (e.g. M1-A1, M1-B4) or an assigned operator is detected active.
+            </div>
+          </div>
+        ) : (
+          activeZones.map(zone => {
+            const machineWorkers = allWorkers.filter(w => {
+              const mId = w.current_machine || (w.last_beacon_id ? w.last_beacon_id.split('-')[0] : '');
+              return mId === zone.machine && isRecent(w.timestamp);
+            });
+            const hasActiveWorker = machineWorkers.length > 0;
+            const primaryWorker = machineWorkers[0];
 
-          // Machine cards (Machine 1, Machine 2, Machine 3)
-          const machineWorkers = allWorkers.filter(w => w.current_machine === zone.machine && isRecent(w.timestamp));
-          const hasActiveWorker = machineWorkers.length > 0;
-          const primaryWorker = machineWorkers[0];
-
-          let statusBadge;
-          if (hasActiveWorker) {
-            if (primaryWorker.motion_state === 'walking') {
-              statusBadge = <div className="zone-status-pill normal">✓ Running Normally</div>;
+            let statusBadge;
+            if (hasActiveWorker) {
+              if (primaryWorker.motion_state === 'walking') {
+                statusBadge = <div className="zone-status-pill normal">✓ Running Normally</div>;
+              } else {
+                statusBadge = <div className="zone-status-pill idle">IDLE ({primaryWorker.idle_duration_sec || 0}s)</div>;
+              }
             } else {
-              statusBadge = <div className="zone-status-pill idle">IDLE ({primaryWorker.idle_duration_sec || 0}s)</div>;
+              statusBadge = <div className="zone-status-pill standby">Beacon Active • Standby</div>;
             }
-          } else {
-            statusBadge = <div className="zone-status-pill empty">No Active Worker</div>;
-          }
 
           return (
             <div key={zone.id} className="zone-cell">
@@ -252,7 +264,7 @@ const ZoneMap = ({ workers = {}, beacons = [], onWorkerClick }) => {
               </div>
             </div>
           );
-        })}
+        }))}
       </div>
     </div>
   );

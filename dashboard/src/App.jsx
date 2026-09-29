@@ -64,6 +64,7 @@ function getPageFromHash() {
 function App() {
   const [workers, setWorkers] = useState({});
   const [beacons, setBeacons] = useState([]);
+  const [telemetryLogs, setTelemetryLogs] = useState([]);
   const [activePage, setActivePage] = useState(getPageFromHash);
   const [selectedWorker, setSelectedWorker] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -116,6 +117,22 @@ function App() {
       }
     };
 
+    // 1c. Fetch real historical telemetry events from Supabase
+    const fetchSupabaseLogs = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('telemetry_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(100);
+        if (!error && data && !cancelled) {
+          setTelemetryLogs(data);
+        }
+      } catch (err) {
+        // Table might not exist yet
+      }
+    };
+
     // 2. Fallback fetch from Express Backend (only used in simulation mode)
     const fetchBackendWorkers = async () => {
       try {
@@ -139,6 +156,7 @@ function App() {
     const initData = async () => {
       const fromSupabase = await fetchSupabaseWorkers();
       await fetchSupabaseBeacons();
+      await fetchSupabaseLogs();
       if (!fromSupabase && dataMode === 'simulation') {
         await fetchBackendWorkers();
       }
@@ -151,12 +169,10 @@ function App() {
     const workerChannel = supabase
       .channel('public:workers')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'workers' }, (payload) => {
-        console.log('[Supabase Realtime Update: Workers]', payload);
         fetchSupabaseWorkers();
       })
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          console.log('✓ Supabase Realtime Workers subscribed');
           setBackendStatus('connected');
         }
       });
@@ -164,9 +180,16 @@ function App() {
     // 3b. Supabase Realtime Subscription for Beacons
     const beaconChannel = supabase
       .channel('public:beacons')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'beacons' }, (payload) => {
-        console.log('[Supabase Realtime Update: Beacons]', payload);
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'beacons' }, () => {
         fetchSupabaseBeacons();
+      })
+      .subscribe();
+
+    // 3c. Supabase Realtime Subscription for Telemetry Logs
+    const logChannel = supabase
+      .channel('public:telemetry_logs')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'telemetry_logs' }, () => {
+        fetchSupabaseLogs();
       })
       .subscribe();
 
@@ -175,6 +198,7 @@ function App() {
       if (cancelled) return;
       await fetchSupabaseWorkers();
       await fetchSupabaseBeacons();
+      await fetchSupabaseLogs();
     }, 3000);
 
     return () => {
@@ -182,6 +206,7 @@ function App() {
       clearInterval(pollInterval);
       supabase.removeChannel(workerChannel);
       supabase.removeChannel(beaconChannel);
+      supabase.removeChannel(logChannel);
     };
   }, [dataMode]);
 
@@ -223,16 +248,16 @@ function App() {
   const renderPage = () => {
     if (selectedWorker) return <WorkerDetail workerId={selectedWorker} workerData={workers[selectedWorker]} onBack={() => setSelectedWorker(null)} />;
     switch (activePage) {
-      case 'machines':    return <MachinesPage workers={workers} />;
+      case 'machines':    return <MachinesPage workers={workers} beacons={beacons} />;
       case 'operators':   return <OperatorsPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} />;
-      case 'performance': return <PerformancePage workers={workers} />;
-      case 'rounds':      return <RoundsPage workers={workers} />;
-      case 'breaks':      return <BreaksPage workers={workers} />;
-      case 'reports':     return <ReportsPage workers={workers} onOpenCorrelation={() => handleNavigate('correlation')} />;
-      case 'correlation': return <CorrelationDetailPage workers={workers} onBack={() => handleNavigate('reports')} />;
-      case 'alerts':      return <AlertsPage workers={workers} onWorkerClick={(id) => setSelectedWorker(id)} />;
+      case 'performance': return <PerformancePage workers={workers} beacons={beacons} telemetryLogs={telemetryLogs} />;
+      case 'rounds':      return <RoundsPage workers={workers} beacons={beacons} telemetryLogs={telemetryLogs} />;
+      case 'breaks':      return <BreaksPage workers={workers} telemetryLogs={telemetryLogs} />;
+      case 'reports':     return <ReportsPage workers={workers} beacons={beacons} telemetryLogs={telemetryLogs} onOpenCorrelation={() => handleNavigate('correlation')} />;
+      case 'correlation': return <CorrelationDetailPage workers={workers} telemetryLogs={telemetryLogs} onBack={() => handleNavigate('reports')} />;
+      case 'alerts':      return <AlertsPage workers={workers} beacons={beacons} telemetryLogs={telemetryLogs} onWorkerClick={(id) => setSelectedWorker(id)} />;
       case 'settings':    return <SettingsPage dataMode={dataMode} onSetDataMode={handleSetDataMode} backendStatus={backendStatus} />;
-      default:            return <DashboardPage workers={workers} beacons={beacons} onWorkerClick={(id) => setSelectedWorker(id)} dataMode={dataMode} />;
+      default:            return <DashboardPage workers={workers} beacons={beacons} telemetryLogs={telemetryLogs} onWorkerClick={(id) => setSelectedWorker(id)} dataMode={dataMode} />;
     }
   };
 

@@ -6,7 +6,7 @@ import KeyInsights from '../components/KeyInsights';
 import ModeDurationAnalytics from '../components/ModeDurationAnalytics';
 import LiveStatusPanel from '../components/LiveStatusPanel';
 
-const DashboardPage = ({ workers, onWorkerClick, dataMode, beacons = [] }) => {
+const DashboardPage = ({ workers, onWorkerClick, dataMode, beacons = [], telemetryLogs = [] }) => {
   const isLive = dataMode === 'live';
 
   return (
@@ -15,14 +15,14 @@ const DashboardPage = ({ workers, onWorkerClick, dataMode, beacons = [] }) => {
       {isLive && <LiveStatusPanel workers={workers} beacons={beacons} />}
 
       <ZoneMap workers={workers} beacons={beacons} onWorkerClick={onWorkerClick} dataMode={dataMode} />
-      <KPIGrid workers={workers} dataMode={dataMode} />
+      <KPIGrid workers={workers} beacons={beacons} telemetryLogs={telemetryLogs} dataMode={dataMode} />
 
       {/* In live mode, analytics panels are hidden since there is no historical data yet */}
       {!isLive && (
         <>
           <div className="bottom-split">
             <EfficiencyChart />
-            <KeyInsights />
+            <KeyInsights workers={workers} telemetryLogs={telemetryLogs} />
           </div>
           <ModeDurationAnalytics />
         </>
