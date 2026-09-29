@@ -1,427 +1,343 @@
-/*
-  Beacon 2 Station Firmware - ESP32 (Production-Ready Final Edition)
-  ---------------------------------------------------------------------------------
-  Station: M1-B4 (Midpoint / Half-Round Station)
-  Peer Beacon: M1-A1 (Beacon 1 Gateway)
-  Monitored Band: WRISTBAND_01
-  
-  Architecture:
-  - Dual BLE: Broadcasts "M1-B4" while scanning for "WRISTBAND_01" & "M1-A1"
-  - Periodic 5s Online Heartbeat to 'beacons' table (Keeps M1-B4 ONLINE)
-  - Periodic 2s Live Dashboard Sync to 'workers' table (Side B / Heading Control)
-  - Proximity 10cm Check-in: Logs 'HALF_ROUND_COMPLETED' in 'telemetry_logs'
-  - 3-Second Idle Engine (EMA Noise Filtered)
-  - Non-blocking asynchronous queues (WDT-Safe)
-*/
-
+// ============================================================
+// Patrol Beacon v2  -  ESP32 / ESP32-C3
+// Beacon 2 Configuration
+//
+//   BEACON_ID: "M1-B4"
+//   PEER_ID:   "M1-A1"
+//   ZONE:      "Side B"
+//   MACHINE:   "M1"
+//
+// What it does
+//  - Advertises its own name so the other beacon can measure range to it
+//  - Scans continuously (own task, duplicates ON) for WRISTBAND_01 and peer beacon
+//  - NO accelerometer: walking / idle is estimated from how the band's RSSI changes
+//    (RSSI moves by MOVE_DB or more = moving; no change for 3 s = idle)
+//  - Median-of-3 RSSI filter + hysteresis + cooldown for the 10 cm touch
+//  - Sends to Supabase:
+//      beacons        heartbeat every 5 s (+ peer range)
+//      workers        band moving / idle every 2 s (only while the band is heard)
+//      telemetry_logs event = 'TOUCH' (database trigger computes half-round / heading)
+//  - Optional: BOOT button resets the lap counters in the database
+// ============================================================
 #include <WiFi.h>
-#include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 #include <BLEDevice.h>
 #include <BLEUtils.h>
-#include <BLEServer.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 #include <math.h>
 
-// =================== NETWORK CONFIGURATION ===================
-const char* WIFI_SSID          = "Redmi11T";
-const char* WIFI_PASSWORD      = "hari1234";
+// ---------------- CONFIG ----------------
+const char* WIFI_SSID    = "Redmi11T";
+const char* WIFI_PASS    = "hari1234";
+const char* SUPABASE_URL = "https://vldhjpvyphzxofmwqmys.supabase.co";   // no trailing slash
+const char* SUPABASE_KEY = "sb_publishable_UxA-HekCjNWcPPBTmlbyJg_RVErZCmK";
 
-const char* SUPABASE_URL       = "https://vldhjpvyphzxofmwqmys.supabase.co"; 
-const char* SUPABASE_KEY       = "sb_publishable_UxA-HekCjNWcPPBTmlbyJg_RVErZCmK";
+const char* BEACON_ID    = "M1-B4";
+const char* PEER_ID      = "M1-A1";
+const char* ZONE         = "Side B";
+const char* MACHINE_ID   = "M1";
+const char* BAND_NAME    = "WRISTBAND_01";   // BLE name of the band
+const char* BAND_DEVICE  = "WRISTBAND_01";   // workers.device_id
 
-// =================== HARDWARE & THRESHOLDS ===================
-#define STATION_ID             "M1-B4"
-#define PEER_BEACON_ID         "M1-A1"
-#define TARGET_BAND_NAME       "WRISTBAND_01"
-#define WORKER_ID              "worker_1"
-#define STATUS_LED_PIN         2
+const int LED_PIN   = 2;     // -1 to disable   (ESP32-C3 boards: use your LED pin)
+const int RESET_PIN = 0;     // -1 to disable   (BOOT button; ESP32-C3 uses GPIO 9)
 
-#define TOUCH_RSSI_THRESHOLD  -38  // ~10 cm touch check-in
-#define LIVE_RSSI_THRESHOLD   -85  // In-room boundary
-#define LOCAL_ZONE_THRESHOLD  -65  // Inside Side B station boundary
+// Touch detection: CALIBRATE with the Serial Monitor (see the [BAND] lines)
+const int      TOUCH_ENTER_RSSI  = -45;   // filtered RSSI at/above this = touch (~10 cm)
+const int      TOUCH_EXIT_RSSI   = -55;   // must drop to this before the next touch counts
+const int      NEAR_RSSI         = -65;   // band is "near this beacon" (owns zone fields)
+const uint32_t TOUCH_COOLDOWN_MS = 5000;
 
-const int MEASURED_POWER_1M    = -59;
-const float PATH_LOSS_EXPONENT = 2.0;
+const float TX_POWER_1M = -59.0;          // RSSI of the band at 1 m (calibrate)
+const float PATH_LOSS_N = 2.0;
 
-// State Variables
-BLEScan* pBLEScan;
-int currentBandRssi = -99;
-float currentBandDistanceM = 99.0;
-unsigned long lastBandSeenTime = 0;
+// Motion estimate from RSSI (tune on real walking)
+const float    MOVE_DB       = 4.0;    // RSSI change (dB) that counts as movement
+const uint32_t IDLE_AFTER_MS = 3000;   // no movement for 3 s = idle
 
-int peerBeaconRssi = -99;
-float peerBeaconDistanceM = -1.0;
-unsigned long lastPeerSeenTime = 0;
+const uint32_t HEARTBEAT_MS    = 5000;
+const uint32_t LIVE_MS         = 2000;
+const uint32_t BAND_TIMEOUT_MS = 3000;
+const uint32_t PEER_TIMEOUT_MS = 10000;
+// =====================================================
 
-// Checkpoint & Ownership State
-bool isReturnLegOwner = false;
-bool hasDepartedB2 = true;
-unsigned long lastCheckpointTouchTime = 0;
+portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 
-// 3-Second Idle Engine (EMA Filtered)
-unsigned long lastMovementTime = 0;
-float baselineDistance = 0.0;
-float smoothedDistanceM = -1.0;
-bool hasHardwareMotion = false;
-String currentMotionState = "stationary";
-int idleDurationSec = 0;
-float walkingSpeed = 0.00;
+// ---- shared with the scan task ----
+volatile uint32_t lastBandMs   = 0;
+volatile uint8_t  bandMotion   = 0;
+volatile uint8_t  bandIdleSec  = 0;
+volatile int      bandRssi     = -100;   // filtered
+volatile bool     touched      = false;
+volatile bool     touchPending = false;
+volatile int      touchRssi    = 0;
+volatile float    touchDistCm  = 0;
+volatile uint32_t lastTouchMs  = 0;
 
-// System Timers
-unsigned long lastHeartbeatTime = 0;
-unsigned long lastDashboardSyncTime = 0;
-unsigned long lastMonitorLogTime = 0;
-unsigned long lastWiFiCheck = 0;
+volatile int      peerRssi     = -100;
+volatile uint32_t lastPeerMs   = 0;
 
-// Asynchronous Queues
-volatile bool pendingEventUpload = false;
-int queuedRssi = -40;
-float queuedDistanceCm = 5.0;
+int rb[3]; int rbCount = 0; int rbIdx = 0;
 
-// Non-blocking LED Engine
-bool isBlinking = false;
-int blinkCycles = 0;
-bool ledState = LOW;
-unsigned long lastBlinkToggle = 0;
+// motion estimator (only touched inside the scan callback)
+float    emaRssi = -100;
+int      baseRssi = -100;
+uint32_t lastMoveMs = 0;
 
-void triggerBlink(int count) {
-  isBlinking = true;
-  blinkCycles = count * 2;
-  lastBlinkToggle = millis();
+int median3(int a, int b, int c) {
+  if ((a >= b && a <= c) || (a <= b && a >= c)) return a;
+  if ((b >= a && b <= c) || (b <= a && b >= c)) return b;
+  return c;
 }
 
-void updateBlinkEngine() {
-  if (!isBlinking) return;
-  if (millis() - lastBlinkToggle >= 70) {
-    lastBlinkToggle = millis();
-    ledState = !ledState;
-    digitalWrite(STATUS_LED_PIN, ledState);
-    blinkCycles--;
-    if (blinkCycles <= 0) {
-      isBlinking = false;
-      digitalWrite(STATUS_LED_PIN, LOW);
-    }
-  }
+float distCm(int rssi) {
+  return 100.0f * powf(10.0f, (TX_POWER_1M - rssi) / (10.0f * PATH_LOSS_N));
 }
 
-float calculateDistance(int rssi) {
-  if (rssi == 0) return -1.0;
-  float ratio = (float)(MEASURED_POWER_1M - rssi) / (10.0 * PATH_LOSS_EXPONENT);
-  return pow(10.0, ratio);
-}
+class ScanCallback : public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice dev) override {
+    if (!dev.haveName()) return;
+    int rssi = dev.getRSSI();
+    uint32_t now = millis();
 
-// 1. Send Online Heartbeat to 'beacons' table (Keeps M1-B4 ONLINE)
-void sendBeaconHeartbeat() {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setTimeout(2500);
-
-  HTTPClient https;
-  https.setTimeout(2500);
-
-  String url = String(SUPABASE_URL) + "/rest/v1/beacons?beacon_id=eq." + String(STATION_ID);
-  if (https.begin(client, url)) {
-    https.addHeader("Content-Type", "application/json");
-    https.addHeader("apikey", SUPABASE_KEY);
-    https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-    https.addHeader("Prefer", "return=minimal");
-
-    String payload = "{\"status\":\"online\",\"battery_pct\":100}";
-    https.PATCH(payload);
-    https.end();
-  }
-  client.stop(); // Immediate TLS heap cleanup
-}
-
-// 2. Sync Worker Dashboard (Zone-Guarded & Stale-Proof)
-void syncWorkerDashboard() {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  bool isBandPresent = (millis() - lastBandSeenTime < 4500) && (currentBandRssi >= LIVE_RSSI_THRESHOLD);
-  bool isNearB2 = isBandPresent && (currentBandRssi >= LOCAL_ZONE_THRESHOLD);
-
-  // Maintain ownership if actively near B2 OR if worker is on return leg and still heard
-  bool shouldOwnUpdate = isNearB2 || (isReturnLegOwner && isBandPresent);
-  if (!shouldOwnUpdate) return;
-
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setTimeout(2500);
-
-  HTTPClient https;
-  https.setTimeout(2500);
-
-  String url = String(SUPABASE_URL) + "/rest/v1/workers?worker_id=eq." + String(WORKER_ID);
-  if (https.begin(client, url)) {
-    https.addHeader("Content-Type", "application/json");
-    https.addHeader("apikey", SUPABASE_KEY);
-    https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-    https.addHeader("Prefer", "return=minimal");
-
-    // Dynamic Heading: "Forward" while approaching B4, "Return" once checkpoint is visited
-    String heading = isReturnLegOwner ? "Return" : "Forward";
-
-    String payload = "{";
-    payload += "\"current_zone\":\"Side B\",";
-    payload += "\"last_beacon_id\":\"" + String(STATION_ID) + "\",";
-    payload += "\"beacon_rssi\":" + String(currentBandRssi) + ",";
-    payload += "\"current_machine\":\"M1\",";
-    payload += "\"directional_heading\":\"" + heading + "\",";
-    payload += "\"motion_state\":\"" + currentMotionState + "\",";
-    payload += "\"idle_duration_sec\":" + String(idleDurationSec) + ",";
-    payload += "\"walking_speed_ms\":" + String(walkingSpeed, 2) + ",";
-    payload += "\"shift_status\":\"active\",";
-    payload += "\"beacon_battery_pct\":100";
-    payload += "}";
-
-    https.PATCH(payload);
-    https.end();
-  }
-  client.stop(); // Immediate TLS heap cleanup
-}
-
-// 3. Upload Half-Round Check-in Event (telemetry_logs)
-void handleEventUpload() {
-  if (!pendingEventUpload) return;
-  if (WiFi.status() != WL_CONNECTED) {
-    pendingEventUpload = false;
-    return;
-  }
-
-  WiFiClientSecure client;
-  client.setInsecure();
-  client.setTimeout(3000);
-
-  HTTPClient https;
-  https.setTimeout(3000);
-
-  String logEndpoint = String(SUPABASE_URL) + "/rest/v1/telemetry_logs";
-  if (https.begin(client, logEndpoint)) {
-    https.addHeader("Content-Type", "application/json");
-    https.addHeader("apikey", SUPABASE_KEY);
-    https.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
-    https.addHeader("Prefer", "return=minimal");
-
-    String payload = "{";
-    payload += "\"station_id\":\"" + String(STATION_ID) + "\",";
-    payload += "\"target_device\":\"" + String(TARGET_BAND_NAME) + "\",";
-    payload += "\"event\":\"HALF_ROUND_COMPLETED\",";
-    payload += "\"lap_duration_sec\":0.00,";
-    payload += "\"signal_rssi\":" + String(queuedRssi) + ",";
-    payload += "\"est_distance_cm\":" + String(queuedDistanceCm, 2) + ",";
-    payload += "\"uptime_ms\":" + String(millis());
-    payload += "}";
-
-    int code = https.POST(payload);
-    if (code == 200 || code == 201) {
-      Serial.println("[SUPABASE] Half-Round Check-in recorded at Beacon 2 (M1-B4)!");
-    }
-    https.end();
-  }
-  client.stop(); // Immediate TLS heap cleanup
-
-  pendingEventUpload = false;
-  syncWorkerDashboard(); // Instant state sync to update heading to "Return"
-}
-
-// Scanner Callback: Evaluates Wristband and Beacon 1 (M1-A1)
-class Beacon2ScannerCallback: public BLEAdvertisedDeviceCallbacks {
-  void onResult(BLEAdvertisedDevice advertisedDevice) {
-    if (!advertisedDevice.haveName()) return;
-    String name = advertisedDevice.getName().c_str();
-    int rssi = advertisedDevice.getRSSI();
-
-    // 1. Inter-Beacon Tracking to Beacon 1 (M1-A1)
-    if (name == PEER_BEACON_ID) {
-      peerBeaconRssi = rssi;
-      peerBeaconDistanceM = calculateDistance(rssi);
-      lastPeerSeenTime = millis();
+    // ---- other beacon: range between the two beacons ----
+    if (dev.getName() == PEER_ID) {
+      portENTER_CRITICAL(&mux);
+      if (now - lastPeerMs > PEER_TIMEOUT_MS) peerRssi = rssi;
+      else peerRssi = (peerRssi * 3 + rssi) / 4;
+      lastPeerMs = now;
+      portEXIT_CRITICAL(&mux);
+      return;
     }
 
-    // 2. Wristband Detection
-    if (name == TARGET_BAND_NAME) {
-      currentBandRssi = rssi;
-      float rawDistance = calculateDistance(rssi);
-      currentBandDistanceM = rawDistance;
-      lastBandSeenTime = millis();
+    // ---- the wristband ----
+    if (!(dev.getName() == BAND_NAME)) return;
 
-      // Exponential Moving Average (EMA) Filter
-      if (smoothedDistanceM < 0.0) {
-        smoothedDistanceM = rawDistance;
-      } else {
-        smoothedDistanceM = (0.70 * smoothedDistanceM) + (0.30 * rawDistance);
-      }
+    portENTER_CRITICAL(&mux);
+    bool stale = (now - lastBandMs > 2000);
+    if (stale) rbCount = 0;
+    rb[rbIdx] = rssi;
+    rbIdx = (rbIdx + 1) % 3;
+    if (rbCount < 3) rbCount++;
 
-      // Accelerometer Payload Sync (if wristband broadcasts MPU data)
-      if (advertisedDevice.haveManufacturerData()) {
-        std::string mfg = advertisedDevice.getManufacturerData();
-        if (mfg.length() >= 2) {
-          hasHardwareMotion = true;
-          if ((uint8_t)mfg[0] == 0x01) {
-            currentMotionState = "walking";
-            walkingSpeed = 1.20;
-            idleDurationSec = 0;
-            lastMovementTime = millis();
-          } else {
-            currentMotionState = "stationary";
-            walkingSpeed = 0.00;
-            idleDurationSec = (uint8_t)mfg[1];
-          }
-        }
-      } 
-      // RF Displacement Fallback (Requires > 0.80m displacement)
-      else {
-        hasHardwareMotion = false;
-        if (abs(smoothedDistanceM - baselineDistance) >= 0.80) {
-          lastMovementTime = millis();
-          baselineDistance = smoothedDistanceM;
-          currentMotionState = "walking";
-          walkingSpeed = 1.20;
-          idleDurationSec = 0;
-        }
-      }
+    lastBandMs = now;
 
-      // Departure Detection: Worker moved away from B4 on the return path (> 1.80m or RSSI <= -65 dBm)
-      if (!hasDepartedB2) {
-        if (smoothedDistanceM > 1.80 || currentBandRssi <= -65) {
-          hasDepartedB2 = true;
-          Serial.println("[BEACON 2] Departure Verified: Worker en route back to Station A1.");
-        }
-      }
-
-      // 10cm Checkpoint Touch Event
-      if (currentBandRssi >= TOUCH_RSSI_THRESHOLD) {
-        if (millis() - lastCheckpointTouchTime < 3000) return; // 3-second debounce
-
-        if (hasDepartedB2) {
-          lastCheckpointTouchTime = millis();
-          hasDepartedB2 = false;
-          isReturnLegOwner = true; // Claim live updates for the return path
-
-          triggerBlink(6);
-          Serial.println("\n***************************************************");
-          Serial.println("  >>> [BEACON 2] 10cm TOUCH: HALF-ROUND VISITED! <<< ");
-          Serial.printf ("  Signal: %d dBm | Distance: %.1f cm\n", currentBandRssi, currentBandDistanceM * 100.0);
-          Serial.println("***************************************************\n");
-
-          queuedRssi = currentBandRssi;
-          queuedDistanceCm = currentBandDistanceM * 100.0;
-          pendingEventUpload = true;
-        }
+    // ---- walking / idle from RSSI change ----
+    if (stale) {                       // band just (re)appeared: start fresh
+      emaRssi = rssi; baseRssi = rssi; lastMoveMs = now;
+    } else {
+      emaRssi = 0.5f * emaRssi + 0.5f * rssi;
+      if (fabsf(emaRssi - (float)baseRssi) >= MOVE_DB) {
+        baseRssi = (int)emaRssi;
+        lastMoveMs = now;
       }
     }
+    if (now - lastMoveMs < IDLE_AFTER_MS) {
+      bandMotion = 1;
+      bandIdleSec = 0;
+    } else {
+      bandMotion = 0;
+      uint32_t sec = (now - lastMoveMs) / 1000;
+      bandIdleSec = sec > 255 ? 255 : (uint8_t)sec;
+    }
+
+    if (rbCount >= 3) {
+      int f = median3(rb[0], rb[1], rb[2]);
+      bandRssi = f;
+      if (!touched && f >= TOUCH_ENTER_RSSI && (now - lastTouchMs) > TOUCH_COOLDOWN_MS) {
+        touched = true;
+        lastTouchMs = now;
+        touchPending = true;
+        touchRssi = f;
+        touchDistCm = distCm(f);
+      } else if (touched && f <= TOUCH_EXIT_RSSI) {
+        touched = false;
+      }
+    }
+    portEXIT_CRITICAL(&mux);
   }
 };
 
+BLEScan* pScan;
+
+void scanTask(void*) {
+  for (;;) {
+    pScan->start(1, false);
+    pScan->clearResults();
+    vTaskDelay(5 / portTICK_PERIOD_MS);
+  }
+}
+
+// ---------------- Supabase ----------------
+WiFiClientSecure secureClient;
+
+bool sendJson(const char* method, const String& path, const String& body) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  HTTPClient http;
+  http.begin(secureClient, String(SUPABASE_URL) + "/rest/v1/" + path);
+  http.setReuse(true);
+  http.setTimeout(5000);
+  http.addHeader("apikey", SUPABASE_KEY);
+  http.addHeader("Authorization", String("Bearer ") + SUPABASE_KEY);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Prefer", "return=minimal");
+  int code = http.sendRequest(method, body);
+  http.end();
+  secureClient.stop(); // Clean TLS buffer release
+  if (code < 200 || code >= 300) {
+    Serial.printf("[HTTP] %s %s -> %d\n", method, path.c_str(), code);
+    return false;
+  }
+  return true;
+}
+
+void sendHeartbeat() {
+  int pr; uint32_t pm;
+  portENTER_CRITICAL(&mux); pr = peerRssi; pm = lastPeerMs; portEXIT_CRITICAL(&mux);
+
+  char body[220];
+  if (pm != 0 && millis() - pm < PEER_TIMEOUT_MS) {
+    snprintf(body, sizeof(body),
+      "{\"status\":\"online\",\"battery_pct\":100,\"peer_beacon_id\":\"%s\","
+      "\"peer_rssi\":%d,\"peer_distance_cm\":%.0f}", PEER_ID, pr, distCm(pr));
+  } else {
+    snprintf(body, sizeof(body),
+      "{\"status\":\"online\",\"battery_pct\":100,\"peer_beacon_id\":\"%s\","
+      "\"peer_rssi\":null,\"peer_distance_cm\":null}", PEER_ID);
+  }
+  bool ok = sendJson("PATCH", String("beacons?beacon_id=eq.") + BEACON_ID, String(body));
+  Serial.printf("[HB] %s\n", ok ? "ok" : "FAILED");
+}
+
+void sendLiveState() {
+  uint32_t heard; uint8_t motion, idle; int f;
+  portENTER_CRITICAL(&mux);
+  heard = lastBandMs; motion = bandMotion; idle = bandIdleSec; f = bandRssi;
+  portEXIT_CRITICAL(&mux);
+  if (heard == 0 || millis() - heard > BAND_TIMEOUT_MS) return;   // not heard: stay silent
+
+  char body[380];
+  int n = snprintf(body, sizeof(body),
+    "{\"band_status\":\"online\",\"motion_state\":\"%s\",\"idle_duration_sec\":%u,"
+    "\"walking_speed_ms\":%.2f,\"beacon_battery_pct\":100",
+    motion ? "walking" : "stationary", idle, motion ? 1.20 : 0.00);
+
+  // only claim zone / last beacon when the band is near THIS beacon
+  if (f >= NEAR_RSSI) {
+    snprintf(body + n, sizeof(body) - n,
+      ",\"current_zone\":\"%s\",\"last_beacon_id\":\"%s\",\"current_machine\":\"%s\","
+      "\"beacon_rssi\":%d}", ZONE, BEACON_ID, MACHINE_ID, f);
+  } else {
+    snprintf(body + n, sizeof(body) - n, "}");
+  }
+  bool ok = sendJson("PATCH", String("workers?device_id=eq.") + BAND_DEVICE, String(body));
+  Serial.printf("[LIVE] %s idle=%us rssi=%d -> %s\n", motion ? "walking" : "stationary", idle, f, ok ? "ok" : "FAILED");
+}
+
+void sendTouch(int rssi, float cm) {
+  char body[300];
+  snprintf(body, sizeof(body),
+    "{\"station_id\":\"%s\",\"target_device\":\"%s\",\"event\":\"TOUCH\","
+    "\"signal_rssi\":%d,\"est_distance_cm\":%.2f,\"uptime_ms\":%lu}",
+    BEACON_ID, BAND_DEVICE, rssi, cm, (unsigned long)millis());
+  bool ok = sendJson("POST", "telemetry_logs", String(body));
+  Serial.printf("[TOUCH] rssi=%d ~%.1fcm -> %s\n", rssi, cm, ok ? "ok" : "FAILED");
+}
+
+void resetLaps() {
+  bool ok = sendJson("PATCH", String("workers?device_id=eq.") + BAND_DEVICE,
+    "{\"lap_count\":0,\"lap_duration_sec\":0,\"lap_started_at\":null,\"half_round_done\":false,"
+    "\"directional_heading\":\"Stationary\"}");
+  Serial.printf("[RESET] laps reset -> %s\n", ok ? "ok" : "FAILED");
+}
+
+void ensureWifi() {
+  if (WiFi.status() == WL_CONNECTED) return;
+  Serial.println("[WiFi] connecting...");
+  WiFi.disconnect();
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  uint32_t t0 = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) delay(250);
+  if (WiFi.status() == WL_CONNECTED) Serial.println("[WiFi] connected");
+}
+
+uint32_t lastBeat = 0, lastLive = 0, lastDebug = 0, ledOffAt = 0;
+
 void setup() {
   Serial.begin(115200);
-  pinMode(STATUS_LED_PIN, OUTPUT);
-  digitalWrite(STATUS_LED_PIN, LOW);
-  delay(1000);
-
-  Serial.println("\n=========================================");
-  Serial.println("   BEACON 2 STATION (M1-B4) STARTING     ");
-  Serial.println("=========================================");
+  delay(500);
+  if (LED_PIN >= 0) { pinMode(LED_PIN, OUTPUT); digitalWrite(LED_PIN, LOW); }
+  if (RESET_PIN >= 0) pinMode(RESET_PIN, INPUT_PULLUP);
+  Serial.printf("Beacon %s starting (peer %s)\n", BEACON_ID, PEER_ID);
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  int retries = 0;
-  while (WiFi.status() != WL_CONNECTED && retries < 20) {
-    delay(500);
-    Serial.print(".");
-    retries++;
-  }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.printf("\n✓ Wi-Fi Connected! IP: %s\n", WiFi.localIP().toString().c_str());
-  }
+  WiFi.setAutoReconnect(true);
+  secureClient.setInsecure();          // prototype only
+  ensureWifi();
 
-  // 1. BLE Broadcaster (Sends M1-B4 so B1 tracks distance to B2)
-  BLEDevice::init(STATION_ID);
-  BLEDevice::setPower(ESP_PWR_LVL_P9);
+  BLEDevice::init(BEACON_ID);
+  BLEDevice::setPower(ESP_PWR_LVL_P3);
 
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  BLEAdvertisementData advData;
-  advData.setFlags(0x06);
-  advData.setName(STATION_ID);
-  pAdvertising->setAdvertisementData(advData);
-  pAdvertising->setMinInterval(160);
-  pAdvertising->setMaxInterval(160);
+  // advertise our own name so the other beacon can measure range to us
+  BLEAdvertising* adv = BLEDevice::getAdvertising();
+  BLEAdvertisementData ad;
+  ad.setFlags(0x06);
+  ad.setName(BEACON_ID);
+  adv->setAdvertisementData(ad);
+  adv->setMinInterval(160);
+  adv->setMaxInterval(160);
   BLEDevice::startAdvertising();
 
-  // 2. BLE Scanner
-  pBLEScan = BLEDevice::getScan();
-  pBLEScan->setAdvertisedDeviceCallbacks(new Beacon2ScannerCallback());
-  pBLEScan->setActiveScan(true);
-  pBLEScan->setInterval(100);
-  pBLEScan->setWindow(99);
+  pScan = BLEDevice::getScan();
+  pScan->setAdvertisedDeviceCallbacks(new ScanCallback(), true);   // true = every advert
+  pScan->setActiveScan(true);
+  pScan->setInterval(100);
+  pScan->setWindow(90);
+  xTaskCreate(scanTask, "scan", 8192, nullptr, 1, nullptr);
 
-  lastMovementTime = millis();
-  baselineDistance = 1.0;
-  
-  // Initialize timers cleanly (natural stagger: sync at 2s, heartbeat at 5s)
-  lastDashboardSyncTime = millis();
-  lastHeartbeatTime = millis();
-  lastMonitorLogTime = millis();
-  lastWiFiCheck = millis();
-
-  sendBeaconHeartbeat();
-  Serial.println("✓ Beacon 2 Active & Broadcasting M1-B4\n");
+  sendHeartbeat();
+  lastBeat = millis();
+  lastLive = millis() + 1000;          // stagger the two timers
 }
 
 void loop() {
-  handleEventUpload();
+  ensureWifi();
+  uint32_t now = millis();
 
-  pBLEScan->start(1, false);
-  pBLEScan->clearResults();
+  if (touchPending) {                  // touches first
+    int r; float d;
+    portENTER_CRITICAL(&mux);
+    touchPending = false; r = touchRssi; d = touchDistCm;
+    portEXIT_CRITICAL(&mux);
+    if (LED_PIN >= 0) { digitalWrite(LED_PIN, HIGH); ledOffAt = now + 400; }
+    sendTouch(r, d);
+  }
+  if (LED_PIN >= 0 && ledOffAt && now >= ledOffAt) { digitalWrite(LED_PIN, LOW); ledOffAt = 0; }
 
-  // 3-Second Idle Engine: If stationary for >= 3 seconds, update state
-  if (!hasHardwareMotion && (millis() - lastMovementTime >= 3000)) {
-    currentMotionState = "stationary";
-    walkingSpeed = 0.00;
-    idleDurationSec = (millis() - lastMovementTime) / 1000;
+  if (touched && lastBandMs != 0 && now - lastBandMs > BAND_TIMEOUT_MS) {
+    portENTER_CRITICAL(&mux); touched = false; portEXIT_CRITICAL(&mux);
   }
 
-  // Departure Timeout Fallback: confirm departure if absent for > 4s after touch
-  if (!hasDepartedB2 && (millis() - lastBandSeenTime > 4000) && (millis() - lastCheckpointTouchTime > 4000)) {
-    hasDepartedB2 = true;
-    Serial.println("[BEACON 2] Departure Verified via Absence (en route to Station A1).");
+  if (now - lastBeat >= HEARTBEAT_MS) { lastBeat = now; sendHeartbeat(); }
+  if (now - lastLive >= LIVE_MS)      { lastLive = now; sendLiveState(); }
+
+  if (RESET_PIN >= 0 && digitalRead(RESET_PIN) == LOW) {
+    delay(50);
+    if (digitalRead(RESET_PIN) == LOW) {
+      resetLaps();
+      while (digitalRead(RESET_PIN) == LOW) delay(10);
+    }
   }
 
-  // Release return-leg ownership once worker is well en route to B1 or absent > 6s
-  if (isReturnLegOwner && (currentBandRssi <= -82 || millis() - lastBandSeenTime > 6000)) {
-    isReturnLegOwner = false;
+  if (now - lastDebug >= 500) {
+    lastDebug = now;
+    bool heard = lastBandMs != 0 && now - lastBandMs < BAND_TIMEOUT_MS;
+    bool peer  = lastPeerMs != 0 && now - lastPeerMs < PEER_TIMEOUT_MS;
+    Serial.printf("[BAND] %s rssi=%d touched=%d | [PEER %s] %s rssi=%d\n",
+      heard ? "heard" : "NOT heard", (int)bandRssi, (int)touched,
+      PEER_ID, peer ? "heard" : "NOT heard", (int)peerRssi);
   }
-
-  // Live Dashboard Sync every 2 seconds
-  if (millis() - lastDashboardSyncTime >= 2000) {
-    lastDashboardSyncTime = millis();
-    syncWorkerDashboard();
-  }
-
-  // Monitor Print Log every 2 seconds
-  if (millis() - lastMonitorLogTime >= 2000) {
-    lastMonitorLogTime = millis();
-    Serial.printf("[B2 MONITOR] Band: %.2fm (%d dBm) | Motion: %s (%ds) | Peer B1: %.1fm (%d dBm)\n",
-                  currentBandDistanceM, currentBandRssi,
-                  currentMotionState.c_str(), idleDurationSec,
-                  peerBeaconDistanceM, peerBeaconRssi);
-  }
-
-  // Beacon 2 Heartbeat every 5 seconds (Keeps M1-B4 ONLINE)
-  if (millis() - lastHeartbeatTime >= 5000) {
-    lastHeartbeatTime = millis();
-    sendBeaconHeartbeat();
-  }
-
-  // Auto-reconnect Wi-Fi
-  if (WiFi.status() != WL_CONNECTED && millis() - lastWiFiCheck >= 10000) {
-    lastWiFiCheck = millis();
-    WiFi.reconnect();
-  }
-
-  updateBlinkEngine();
+  delay(20);
 }
