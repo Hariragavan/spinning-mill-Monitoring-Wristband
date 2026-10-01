@@ -98,8 +98,11 @@ const AlertsPage = ({ workers = {}, beacons = [], telemetryLogs = [], onWorkerCl
       const date = new Date(log.created_at);
 
       let message = `${log.event.replace('_', ' ')} logged`;
-      if (log.event === 'TOUCH') message = `Verified 10cm touch at checkpoint ${log.target_beacon || 'station'}`;
-      if (log.event === 'ROUND_COMPLETED') message = `Full machine inspection round completed by ${log.target_device || 'operator'}`;
+      const station = log.station_id || log.target_beacon || 'station';
+      if (log.event === 'TOUCH') message = `Verified 10cm touch at checkpoint ${station}`;
+      if (log.event === 'LAP_STARTED') message = `Patrol round started at checkpoint ${station}`;
+      if (log.event === 'HALF_ROUND_COMPLETED') message = `Midpoint checkpoint visited at ${station}`;
+      if (log.event === 'ROUND_COMPLETED') message = `Full machine inspection round completed (${log.lap_duration_sec || 0}s)`;
       if (log.event === 'EMERGENCY_ASSIST') message = `Emergency assistance flag raised by ${log.target_device || 'operator'}`;
 
       return {
@@ -107,7 +110,7 @@ const AlertsPage = ({ workers = {}, beacons = [], telemetryLogs = [], onWorkerCl
         workerId: null,
         time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         severity,
-        source: log.target_device || log.target_beacon || 'SYS',
+        source: log.target_device || station || 'SYS',
         message,
         status: 'Resolved',
       };

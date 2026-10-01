@@ -10,10 +10,11 @@ const KeyInsights = ({ workers = {}, telemetryLogs = [] }) => {
   if (telemetryLogs.length > 0) {
     telemetryLogs.slice(0, 4).forEach((log, idx) => {
       const timeAgo = Math.max(1, Math.round((Date.now() - new Date(log.created_at).getTime()) / 60000));
-      if (log.event === 'TOUCH') {
+      const stationName = log.station_id || log.target_beacon || 'station';
+      if (log.event === 'TOUCH' || log.event === 'HALF_ROUND_COMPLETED') {
         insights.push({
-          category: 'Checkpoint Touch',
-          simpleText: `Verified 10cm touch at beacon ${log.target_beacon || 'station'} by ${log.target_device || 'operator'}.`,
+          category: log.event === 'HALF_ROUND_COMPLETED' ? 'Midpoint Check' : 'Checkpoint Touch',
+          simpleText: `${log.event === 'HALF_ROUND_COMPLETED' ? 'Midpoint reached' : 'Verified 10cm touch'} at ${stationName} by ${log.target_device || 'operator'}.`,
           time: `${timeAgo} min ago`,
           progress: 90 - idx * 15,
           color: '#0d9488',
@@ -25,15 +26,18 @@ const KeyInsights = ({ workers = {}, telemetryLogs = [] }) => {
             </svg>
           ),
         });
-      } else if (log.event === 'ROUND_COMPLETED') {
+      } else if (log.event === 'ROUND_COMPLETED' || log.event === 'LAP_STARTED') {
+        const isStart = log.event === 'LAP_STARTED';
         insights.push({
-          category: 'Patrol Complete',
-          simpleText: `Full inspection round completed across Machine 1 stations.`,
+          category: isStart ? 'Patrol Started' : 'Patrol Complete',
+          simpleText: isStart
+            ? `Patrol inspection round initiated at ${stationName}.`
+            : `Full inspection round completed across Machine 1 stations (${log.lap_duration_sec || 0}s).`,
           time: `${timeAgo} min ago`,
-          progress: 100,
-          color: '#10b981',
-          bgColor: '#ecfdf5',
-          borderColor: '#a7f3d0',
+          progress: isStart ? 40 : 100,
+          color: isStart ? '#2563eb' : '#10b981',
+          bgColor: isStart ? '#eff6ff' : '#ecfdf5',
+          borderColor: isStart ? '#bfdbfe' : '#a7f3d0',
           icon: (
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
               <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
@@ -43,7 +47,7 @@ const KeyInsights = ({ workers = {}, telemetryLogs = [] }) => {
       } else if (log.event === 'EMERGENCY_ASSIST') {
         insights.push({
           category: 'Assistance Alert',
-          simpleText: `Worker assistance button pressed at ${log.target_beacon || 'machine floor'}.`,
+          simpleText: `Worker assistance button pressed at ${stationName}.`,
           time: `${timeAgo} min ago`,
           progress: 100,
           color: '#ef4444',

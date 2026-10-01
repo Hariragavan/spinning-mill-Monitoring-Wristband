@@ -23,7 +23,7 @@ const RoundsPage = ({ workers = {}, beacons = [], telemetryLogs = [] }) => {
   });
 
   telemetryLogs.forEach(log => {
-    const bId = log.target_beacon || log.payload?.beacon_id || '';
+    const bId = log.station_id || log.target_beacon || log.payload?.beacon_id || '';
     [...STATIONS_A, ...STATIONS_B].forEach(st => {
       if (bId.includes(st)) {
         checkpointCounts[st] = (checkpointCounts[st] || 0) + 1;
@@ -46,17 +46,19 @@ const RoundsPage = ({ workers = {}, beacons = [], telemetryLogs = [] }) => {
 
   // Real patrol log from Supabase telemetry_logs
   const realRoundEvents = telemetryLogs
-    .filter(log => ['ROUND_COMPLETED', 'HALF_ROUND_COMPLETED', 'TOUCH', 'PATROL_STARTED'].includes(log.event))
+    .filter(log => ['ROUND_COMPLETED', 'HALF_ROUND_COMPLETED', 'TOUCH', 'LAP_STARTED', 'PATROL_STARTED'].includes(log.event))
     .slice(0, 10)
     .map(log => {
       const date = new Date(log.created_at);
+      const beaconId = log.station_id || log.target_beacon || '—';
+      const rssiVal = log.signal_rssi ?? log.rssi;
       return {
         id: log.id || log.created_at,
         time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
         operator: log.target_device || 'Operator 1',
         event: log.event.replace('_', ' '),
-        beacon: log.target_beacon || '—',
-        rssi: log.rssi ? `${log.rssi} dBm` : '—',
+        beacon: beaconId,
+        rssi: rssiVal ? `${rssiVal} dBm` : '—',
       };
     });
 

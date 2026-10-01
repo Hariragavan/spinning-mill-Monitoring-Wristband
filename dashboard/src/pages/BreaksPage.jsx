@@ -72,7 +72,7 @@ const BreaksPage = ({ workers = {}, telemetryLogs = [] }) => {
     .forEach(log => {
       realIdleEvents.push({
         time: new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        machine: log.target_beacon ? log.target_beacon.split('-')[0] : 'M1',
+        machine: (log.station_id || log.target_beacon) ? (log.station_id || log.target_beacon).split('-')[0] : 'M1',
         reason: log.event === 'EMERGENCY_ASSIST' ? 'Assistance Button Pressed' : 'Stationary Timeout',
         duration: log.payload?.idle_duration_sec ? `${log.payload.idle_duration_sec}s` : '—',
         status: 'Resolved',
