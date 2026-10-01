@@ -308,3 +308,39 @@ BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE public.beacons;
   END IF;
 END $$;
+
+-- ------------------------------------------------------------
+-- 8. UNIVERSAL BEACON FIRMWARE SYNC PATCH (Safe to Re-Run)
+-- ------------------------------------------------------------
+ALTER TABLE IF EXISTS public.telemetry_logs
+    ADD COLUMN IF NOT EXISTS station_id TEXT,
+    ADD COLUMN IF NOT EXISTS target_device TEXT,
+    ADD COLUMN IF NOT EXISTS event TEXT,
+    ADD COLUMN IF NOT EXISTS lap_duration_sec NUMERIC(10, 2) DEFAULT 0.00,
+    ADD COLUMN IF NOT EXISTS signal_rssi INT,
+    ADD COLUMN IF NOT EXISTS est_distance_cm NUMERIC(10, 2) DEFAULT 0.00,
+    ADD COLUMN IF NOT EXISTS uptime_ms BIGINT DEFAULT 0;
+
+ALTER TABLE IF EXISTS public.workers
+    ADD COLUMN IF NOT EXISTS current_zone TEXT DEFAULT 'Side A',
+    ADD COLUMN IF NOT EXISTS last_beacon_id TEXT DEFAULT 'M1-A1',
+    ADD COLUMN IF NOT EXISTS beacon_rssi INT DEFAULT -70,
+    ADD COLUMN IF NOT EXISTS current_machine TEXT DEFAULT 'M1',
+    ADD COLUMN IF NOT EXISTS directional_heading TEXT DEFAULT 'Stationary',
+    ADD COLUMN IF NOT EXISTS motion_state TEXT DEFAULT 'stationary',
+    ADD COLUMN IF NOT EXISTS idle_duration_sec INT DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS walking_speed_ms NUMERIC(4, 2) DEFAULT 0.00,
+    ADD COLUMN IF NOT EXISTS shift_status TEXT DEFAULT 'active',
+    ADD COLUMN IF NOT EXISTS beacon_battery_pct INT DEFAULT 100,
+    ADD COLUMN IF NOT EXISTS lap_count INT DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS lap_duration_sec NUMERIC(10, 2) DEFAULT 0.00,
+    ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+ALTER TABLE IF EXISTS public.beacons
+    ADD COLUMN IF NOT EXISTS peer_beacon_id TEXT,
+    ADD COLUMN IF NOT EXISTS peer_rssi INT,
+    ADD COLUMN IF NOT EXISTS peer_distance_cm NUMERIC(10, 1),
+    ADD COLUMN IF NOT EXISTS last_seen TIMESTAMPTZ DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
