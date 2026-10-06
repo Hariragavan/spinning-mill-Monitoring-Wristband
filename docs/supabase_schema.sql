@@ -201,42 +201,49 @@ BEGIN
     END IF;
 
     IF NEW.station_id = 'M1-A1' THEN
-        IF w.lap_started_at IS NULL THEN
-            -- First touch at Gateway B1: Patrol round starts
+        IF w.lap_started_at IS NULL OR (NOW() - w.lap_started_at > INTERVAL '30 minutes') THEN
+            -- First touch at Gateway A1 or stale lap timeout: Patrol round starts
             NEW.event := 'PATROL_STARTED';
+            NEW.lap_duration_sec := 0.00;
             UPDATE public.workers
             SET lap_started_at = NOW(),
                 half_round_done = FALSE,
-                directional_heading = 'Forward'
+                directional_heading = 'Forward',
+                last_seen = NOW()
             WHERE worker_id = w.worker_id;
 
         ELSIF w.half_round_done THEN
-            -- Return to Gateway B1 after Midpoint B2: Full round completed!
+            -- Return to Gateway A1 after Midpoint B4: Full round completed!
             NEW.event := 'ROUND_COMPLETED';
             NEW.lap_duration_sec := ROUND(EXTRACT(EPOCH FROM (NOW() - w.lap_started_at))::numeric, 2);
             UPDATE public.workers
-            SET lap_count = lap_count + 1,
+            SET lap_count = COALESCE(lap_count, 0) + 1,
                 lap_duration_sec = NEW.lap_duration_sec,
                 lap_started_at = NOW(),
                 half_round_done = FALSE,
-                directional_heading = 'Forward'
+                directional_heading = 'Forward',
+                last_seen = NOW()
             WHERE worker_id = w.worker_id;
 
         ELSE
-            -- Touched B1 again before reaching B2: Ignore for lap counting
+            -- Touched A1 again before reaching B4: Ignore for lap counting
             NEW.event := 'REPEAT_TOUCH';
+            NEW.lap_duration_sec := 0.00;
         END IF;
 
     ELSIF NEW.station_id = 'M1-B4' THEN
         IF w.lap_started_at IS NOT NULL AND NOT w.half_round_done THEN
-            -- Touch at Midpoint B2: Half-round completed, heading flipped to Return
+            -- Touch at Midpoint B4: Half-round completed, heading flipped to Return
             NEW.event := 'HALF_ROUND_COMPLETED';
+            NEW.lap_duration_sec := ROUND(EXTRACT(EPOCH FROM (NOW() - w.lap_started_at))::numeric, 2);
             UPDATE public.workers
             SET half_round_done = TRUE,
-                directional_heading = 'Return'
+                directional_heading = 'Return',
+                last_seen = NOW()
             WHERE worker_id = w.worker_id;
         ELSE
             NEW.event := 'REPEAT_TOUCH';
+            NEW.lap_duration_sec := 0.00;
         END IF;
     END IF;
 

@@ -117,16 +117,33 @@ function App() {
       }
     };
 
-    // 1c. Fetch real historical telemetry events from Supabase
+    // 1c. Fetch real historical telemetry events from Supabase (filtered for today)
     const fetchSupabaseLogs = async () => {
       try {
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+
         const { data, error } = await supabase
           .from('telemetry_logs')
           .select('*')
+          .gte('created_at', todayStart.toISOString())
           .order('created_at', { ascending: false })
-          .limit(100);
-        if (!error && data && !cancelled) {
-          setTelemetryLogs(data);
+          .limit(500);
+
+        if (!error && !cancelled) {
+          if (data && data.length > 0) {
+            setTelemetryLogs(data);
+          } else {
+            // Fallback: If no logs recorded yet today, retrieve most recent 50 logs
+            const { data: fallbackData } = await supabase
+              .from('telemetry_logs')
+              .select('*')
+              .order('created_at', { ascending: false })
+              .limit(50);
+            if (fallbackData && !cancelled) {
+              setTelemetryLogs(fallbackData);
+            }
+          }
         }
       } catch (err) {
         // Table might not exist yet

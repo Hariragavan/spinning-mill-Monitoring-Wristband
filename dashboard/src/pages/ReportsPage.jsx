@@ -35,7 +35,11 @@ const ReportsPage = ({ workers = {}, beacons = [], telemetryLogs = [], onOpenCor
     : 100;
 
   // Real correlation data: aggregated from telemetry_logs and live patrol counts
-  const roundsToday = filteredWorkers.reduce((s, [, d]) => s + (d.live.lap_count || 0), 0);
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayCompletedCount = telemetryLogs.filter(l => l.event === 'ROUND_COMPLETED' && new Date(l.created_at).getTime() >= todayStart.getTime()).length;
+  const workerRounds = filteredWorkers.reduce((s, [, d]) => s + (d.live.lap_count || 0), 0);
+  const roundsToday = Math.max(workerRounds, todayCompletedCount);
   const idleMinutesToday = filteredWorkers.reduce((s, [, d]) => s + Math.floor((d.live.idle_duration_sec || 0) / 60), 0);
 
   // Group logs by day if available, otherwise present current shift telemetry

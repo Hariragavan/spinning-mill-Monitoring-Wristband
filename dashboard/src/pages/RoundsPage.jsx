@@ -11,18 +11,39 @@ const RoundsPage = ({ workers = {}, beacons = [], telemetryLogs = [] }) => {
   const selectedMachineWorkers = workerList.filter(([, data]) => data.live.current_machine === selectedMachine);
   const primaryWorker = selectedMachineWorkers[0]?.live || workerList[0]?.live || null;
 
-  const totalRounds = workerList.reduce((sum, [, data]) => sum + (data.live.lap_count || 0), 0);
-  const lapDurations = workerList.map(([, data]) => Number(data.live.lap_duration_sec || 0)).filter(d => d > 0);
-  const averageLapSeconds = lapDurations.length ? Math.round(lapDurations.reduce((sum, v) => sum + v, 0) / lapDurations.length) : 0;
-  const slowLapsCount = lapDurations.filter(d => d > 300).length;
+  // Filter today's telemetry logs (midnight to now)
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const todayTime = todayStart.getTime();
 
-  // Real checkpoint touch counts computed from Supabase telemetry_logs
+  const todayLogs = telemetryLogs.filter(l => l.created_at && new Date(l.created_at).getTime() >= todayTime);
+  const todayCompletedRounds = todayLogs.filter(l => l.event === 'ROUND_COMPLETED');
+  const allCompletedRounds = telemetryLogs.filter(l => l.event === 'ROUND_COMPLETED');
+
+  const workerLaps = workerList.reduce((sum, [, data]) => sum + (data.live.lap_count || 0), 0);
+  const totalRounds = Math.max(workerLaps, todayCompletedRounds.length > 0 ? todayCompletedRounds.length : allCompletedRounds.length);
+
+  // Derive average round time from today's completed rounds
+  const roundDurations = (todayCompletedRounds.length > 0 ? todayCompletedRounds : allCompletedRounds)
+    .map(l => Number(l.lap_duration_sec || 0))
+    .filter(d => d > 0);
+  const fallbackDurations = workerList.map(([, data]) => Number(data.live.lap_duration_sec || 0)).filter(d => d > 0);
+  const allDurations = roundDurations.length > 0 ? roundDurations : fallbackDurations;
+  const averageLapSeconds = allDurations.length ? Math.round(allDurations.reduce((sum, v) => sum + v, 0) / allDurations.length) : 0;
+  const slowLapsCount = allDurations.filter(d => d > 300).length;
+
+  const displayLapTime = averageLapSeconds >= 60
+    ? `${Math.floor(averageLapSeconds / 60)}m ${averageLapSeconds % 60}s`
+    : (averageLapSeconds > 0 ? `${averageLapSeconds}s` : '—');
+
+  // Real checkpoint touch counts computed from Supabase telemetry_logs (filtered for today)
   const checkpointCounts = {};
   [...STATIONS_A, ...STATIONS_B].forEach(st => {
     checkpointCounts[st] = 0;
   });
 
-  telemetryLogs.forEach(log => {
+  const activeTouchLogs = todayLogs.length > 0 ? todayLogs : telemetryLogs;
+  activeTouchLogs.forEach(log => {
     const bId = log.station_id || log.target_beacon || log.payload?.beacon_id || '';
     [...STATIONS_A, ...STATIONS_B].forEach(st => {
       if (bId.includes(st)) {
@@ -45,7 +66,8 @@ const RoundsPage = ({ workers = {}, beacons = [], telemetryLogs = [] }) => {
   ];
 
   // Real patrol log from Supabase telemetry_logs
-  const realRoundEvents = telemetryLogs
+  const activeEventsList = todayLogs.length > 0 ? todayLogs : telemetryLogs;
+  const realRoundEvents = activeEventsList
     .filter(log => ['ROUND_COMPLETED', 'HALF_ROUND_COMPLETED', 'TOUCH', 'LAP_STARTED', 'PATROL_STARTED'].includes(log.event))
     .slice(0, 10)
     .map(log => {
@@ -70,9 +92,9 @@ const RoundsPage = ({ workers = {}, beacons = [], telemetryLogs = [] }) => {
       </div>
 
       <div className="summary-row">
-        <SummaryCard label="Total Rounds Completed" value={`${totalRounds} Laps`} status="Recorded in database" icon="route" tone="blue" />
+        <SummaryCard label="Total Rounds Completed" value={`${totalRounds} Laps`} status="Today's total" icon="route" tone="blue" />
         <SummaryCard label="Active Floor Operators" value={workerList.length} status="On patrol" icon="radio" tone="green" />
-        <SummaryCard label="Avg Current Lap Time" value={averageLapSeconds > 0 ? `${averageLapSeconds}s` : '—'} status="Realtime pace" icon="clock" tone="amber" />
+        <SummaryCard label="Avg Round Completion Time" value={displayLapTime} status="Today's average pace" icon="clock" tone="amber" />
         <SummaryCard label="Slow / Idle Patrols" value={slowLapsCount} status={slowLapsCount > 0 ? 'Review required' : 'Pace on target'} icon="alerts" tone={slowLapsCount > 0 ? 'red' : 'green'} />
       </div>
 
