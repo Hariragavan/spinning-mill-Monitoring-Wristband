@@ -188,10 +188,19 @@ RETURNS TRIGGER AS $$
 DECLARE
     w public.workers%ROWTYPE;
 BEGIN
+    -- Only process raw 'TOUCH' events from stations
     IF NEW.event <> 'TOUCH' THEN
         RETURN NEW;
     END IF;
 
+    -- KEEP STATION ONLINE: Auto-refresh the logging station in beacons table
+    UPDATE public.beacons
+    SET status = 'online',
+        last_seen = NOW(),
+        updated_at = NOW()
+    WHERE beacon_id = NEW.station_id;
+
+    -- Row lock on worker to prevent concurrency races
     SELECT * INTO w FROM public.workers
     WHERE device_id = NEW.target_device
     FOR UPDATE;
@@ -200,20 +209,25 @@ BEGIN
         RETURN NEW;
     END IF;
 
+    -- ── STATION 1: GATE CHECKPOINT (M1-A1) ──────────────────────
     IF NEW.station_id = 'M1-A1' THEN
         IF w.lap_started_at IS NULL OR (NOW() - w.lap_started_at > INTERVAL '30 minutes') THEN
-            -- First touch at Gateway A1 or stale lap timeout: Patrol round starts
+            -- First touch at Gate (or auto-reset after 30 min idle): Start patrol
             NEW.event := 'PATROL_STARTED';
             NEW.lap_duration_sec := 0.00;
             UPDATE public.workers
             SET lap_started_at = NOW(),
                 half_round_done = FALSE,
                 directional_heading = 'Forward',
-                last_seen = NOW()
+                current_zone = 'Side A',
+                last_beacon_id = 'M1-A1',
+                band_status = 'online',
+                last_seen = NOW(),
+                updated_at = NOW()
             WHERE worker_id = w.worker_id;
 
         ELSIF w.half_round_done THEN
-            -- Return to Gateway A1 after Midpoint B4: Full round completed!
+            -- Returned to Gate after visiting Midpoint (M1-B4): FULL ROUND COMPLETED
             NEW.event := 'ROUND_COMPLETED';
             NEW.lap_duration_sec := ROUND(EXTRACT(EPOCH FROM (NOW() - w.lap_started_at))::numeric, 2);
             UPDATE public.workers
@@ -222,24 +236,33 @@ BEGIN
                 lap_started_at = NOW(),
                 half_round_done = FALSE,
                 directional_heading = 'Forward',
-                last_seen = NOW()
+                current_zone = 'Side A',
+                last_beacon_id = 'M1-A1',
+                band_status = 'online',
+                last_seen = NOW(),
+                updated_at = NOW()
             WHERE worker_id = w.worker_id;
 
         ELSE
-            -- Touched A1 again before reaching B4: Ignore for lap counting
+            -- Repeat touch at Gate before reaching Midpoint
             NEW.event := 'REPEAT_TOUCH';
             NEW.lap_duration_sec := 0.00;
         END IF;
 
+    -- ── STATION 2: MIDPOINT CHECKPOINT (M1-B4) ──────────────────
     ELSIF NEW.station_id = 'M1-B4' THEN
         IF w.lap_started_at IS NOT NULL AND NOT w.half_round_done THEN
-            -- Touch at Midpoint B4: Half-round completed, heading flipped to Return
+            -- Reached midpoint: Flag half round and flip heading to Return
             NEW.event := 'HALF_ROUND_COMPLETED';
             NEW.lap_duration_sec := ROUND(EXTRACT(EPOCH FROM (NOW() - w.lap_started_at))::numeric, 2);
             UPDATE public.workers
             SET half_round_done = TRUE,
                 directional_heading = 'Return',
-                last_seen = NOW()
+                current_zone = 'Side B',
+                last_beacon_id = 'M1-B4',
+                band_status = 'online',
+                last_seen = NOW(),
+                updated_at = NOW()
             WHERE worker_id = w.worker_id;
         ELSE
             NEW.event := 'REPEAT_TOUCH';
